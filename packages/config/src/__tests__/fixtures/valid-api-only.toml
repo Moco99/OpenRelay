@@ -1,0 +1,8 @@
+[[agents]]
+id = "orchestrator"
+role = "planner"
+mode = "api"
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+token_budget = 30000
+checkpoints = ["plan_ready"]

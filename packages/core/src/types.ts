@@ -81,3 +81,33 @@ export interface SessionMemory {
   createdAt: number
   tokens: number
 }
+
+// ─── Project configuration (parsed from crew.md) ──────────────────────────────
+
+export type Provider = 'anthropic' | 'google' | 'openai'
+
+export interface AgentConfig {
+  id: string
+  role: AgentRole
+  mode: AgentMode
+  provider?: Provider        // required when mode = 'api'
+  model: string
+  cli?: string               // required when mode = 'cli', e.g. 'claude', 'opencode'
+  tokenBudget: number
+  checkpoints: CheckpointEvent[]
+  workingDir: string         // resolved to absolute path
+  env: Record<string, string>
+  systemPromptExtra: string
+}
+
+export interface SessionConfig {
+  maxRetries: number
+  summaryInterval: number
+  checkpointTimeout: number
+  workingDir: string         // resolved to absolute path
+}
+
+export interface ProjectConfig {
+  agents: AgentConfig[]
+  session: SessionConfig
+}

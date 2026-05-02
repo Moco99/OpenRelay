@@ -1,0 +1,23 @@
+[session]
+max_retries = 3
+summary_interval = 8
+checkpoint_timeout = 120
+
+[[agents]]
+id = "orchestrator"
+role = "planner"
+mode = "api"
+provider = "anthropic"
+model = "claude-opus-4-5"
+token_budget = 50000
+checkpoints = ["plan_ready", "deviation_found"]
+
+[[agents]]
+id = "executor"
+role = "coder"
+mode = "cli"
+cli = "opencode"
+model = "gemini-2.5-flash"
+token_budget = 200000
+working_dir = "./src"
+checkpoints = []

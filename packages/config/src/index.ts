@@ -1,2 +1,3 @@
-// Phase 1 — TOML config loader (crew.md parser)
-export {}
+export { loadConfig } from './loader.js'
+export { ConfigError } from './errors.js'
+export type { LoadConfigOptions } from './loader.js'

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { Command } from 'commander'
+import { loadConfig, ConfigError } from '@openrelay/config'
 
 const program = new Command()
 
@@ -14,10 +15,28 @@ program
   .option('-d, --dir <path>', 'Project directory', process.cwd())
   .option('--dry-run', 'Show plan without executing')
   .action((task: string, options: { dir: string; dryRun?: boolean }) => {
-    console.log(`[openrelay] Task received: ${task}`)
-    console.log(`[openrelay] Project dir:   ${options.dir}`)
-    if (options.dryRun) console.log('[openrelay] Dry run mode — not executing')
-    // Phase 5: SessionManager.start(task, config, options)
+    let config
+    try {
+      config = loadConfig(options.dir)
+    } catch (e) {
+      if (e instanceof ConfigError) {
+        console.error(`[openrelay] Config error: ${e.message}`)
+        process.exit(1)
+      }
+      throw e
+    }
+
+    console.log(`[openrelay] Task:    ${task}`)
+    console.log(`[openrelay] Crew:    ${config.agents.length} agent(s) loaded`)
+    for (const agent of config.agents) {
+      const backend = agent.mode === 'api' ? `${agent.provider}/${agent.model}` : `${agent.cli} (${agent.model})`
+      console.log(`  · ${agent.id.padEnd(16)} ${agent.role.padEnd(10)} ${agent.mode}  ${backend}`)
+    }
+    if (options.dryRun) {
+      console.log('[openrelay] Dry run — stopping before execution')
+      return
+    }
+    // Phase 5: SessionManager.start(task, config)
   })
 
 program

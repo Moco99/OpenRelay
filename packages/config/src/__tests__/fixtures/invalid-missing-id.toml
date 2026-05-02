@@ -1,0 +1,7 @@
+[[agents]]
+role = "planner"
+mode = "api"
+provider = "anthropic"
+model = "claude-opus-4-5"
+token_budget = 50000
+checkpoints = []
