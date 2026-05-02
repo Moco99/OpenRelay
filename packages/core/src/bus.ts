@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
 import type { Message, Task, Session, AgentState } from './types.js'
 
+type SQLValue = string | number | bigint | boolean | null | Uint8Array
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS messages (
     id          TEXT PRIMARY KEY,
@@ -116,7 +118,7 @@ export class MessageBus {
 
   updateSession(id: string, updates: Partial<Pick<Session, 'status' | 'endedAt' | 'summary'>>): void {
     const fields: string[] = []
-    const values: unknown[] = []
+    const values: SQLValue[] = []
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
     if (updates.endedAt !== undefined) { fields.push('ended_at = ?'); values.push(updates.endedAt) }
     if (updates.summary !== undefined) { fields.push('summary = ?'); values.push(updates.summary) }
@@ -135,7 +137,7 @@ export class MessageBus {
 
     if (existing) {
       const fields: string[] = ['updated_at = ?']
-      const values: unknown[] = [now]
+      const values: SQLValue[] = [now]
       if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
       if (updates.tokensIn) { fields.push('tokens_in = tokens_in + ?'); values.push(updates.tokensIn) }
       if (updates.tokensOut) { fields.push('tokens_out = tokens_out + ?'); values.push(updates.tokensOut) }
@@ -176,7 +178,7 @@ export class MessageBus {
 
   updateTask(id: string, updates: Partial<Pick<Task, 'status' | 'retries' | 'actualOutput' | 'deviationReport'>>): void {
     const fields: string[] = ['updated_at = ?']
-    const values: unknown[] = [Date.now()]
+    const values: SQLValue[] = [Date.now()]
     if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status) }
     if (updates.retries !== undefined) { fields.push('retries = ?'); values.push(updates.retries) }
     if (updates.actualOutput !== undefined) { fields.push('actual_output = ?'); values.push(updates.actualOutput) }

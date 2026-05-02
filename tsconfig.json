@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["bun-types"]
+  },
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/config" },
+    { "path": "./packages/adapters" },
+    { "path": "./packages/planner" },
+    { "path": "./packages/tui" },
+    { "path": "./apps/cli" }
+  ],
+  "files": []
+}
