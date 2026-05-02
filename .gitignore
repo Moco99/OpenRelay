@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.openrelay/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.local
+bun.lockb

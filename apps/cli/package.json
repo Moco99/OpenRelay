@@ -1,0 +1,21 @@
+{
+  "name": "openrelay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "openrelay": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openrelay/core": "workspace:*",
+    "@openrelay/config": "workspace:*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "openrelay",
+    },
+    "apps/cli": {
+      "name": "openrelay",
+      "version": "0.1.0",
+      "bin": {
+        "openrelay": "./src/index.ts",
+      },
+      "dependencies": {
+        "@openrelay/config": "workspace:*",
+        "@openrelay/core": "workspace:*",
+        "commander": "^13.1.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/adapters": {
+      "name": "@openrelay/adapters",
+      "version": "0.1.0",
+      "dependencies": {
+        "@openrelay/config": "workspace:*",
+        "@openrelay/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/config": {
+      "name": "@openrelay/config",
+      "version": "0.1.0",
+      "dependencies": {
+        "@openrelay/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/core": {
+      "name": "@openrelay/core",
+      "version": "0.1.0",
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/planner": {
+      "name": "@openrelay/planner",
+      "version": "0.1.0",
+      "dependencies": {
+        "@openrelay/adapters": "workspace:*",
+        "@openrelay/config": "workspace:*",
+        "@openrelay/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+    "packages/tui": {
+      "name": "@openrelay/tui",
+      "version": "0.1.0",
+      "dependencies": {
+        "@openrelay/config": "workspace:*",
+        "@openrelay/core": "workspace:*",
+      },
+      "devDependencies": {
+        "typescript": "^5.8.3",
+      },
+    },
+  },
+  "packages": {
+    "@openrelay/adapters": ["@openrelay/adapters@workspace:packages/adapters"],
+
+    "@openrelay/config": ["@openrelay/config@workspace:packages/config"],
+
+    "@openrelay/core": ["@openrelay/core@workspace:packages/core"],
+
+    "@openrelay/planner": ["@openrelay/planner@workspace:packages/planner"],
+
+    "@openrelay/tui": ["@openrelay/tui@workspace:packages/tui"],
+
+    "commander": ["commander@13.1.0", "", {}, "sha512-/rFeCpNJQbhSZjGVwO9RFV3xPqbnERS8MmIQzCtD/zl6gpJuV/bMLuN92oG3F7d8oDEHHRrujSXNUr8fpjntKw=="],
+
+    "openrelay": ["openrelay@workspace:apps/cli"],
+
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
+  }
+}
