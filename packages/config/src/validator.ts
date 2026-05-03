@@ -71,11 +71,12 @@ function validateAgent(raw: unknown, i: number, projectDir: string): AgentConfig
   }
   const role = a['role'] as AgentRole
 
-  // mode
-  if (!VALID_MODES.includes(a['mode'] as AgentMode)) {
+  // mode — optional, defaults to 'cli'
+  const rawMode = a['mode']
+  if (rawMode !== undefined && !VALID_MODES.includes(rawMode as AgentMode)) {
     throw new ConfigError(`must be one of: ${VALID_MODES.join(', ')}`, ctx('mode'))
   }
-  const mode = a['mode'] as AgentMode
+  const mode: AgentMode = rawMode !== undefined ? (rawMode as AgentMode) : 'cli'
 
   // model
   if (typeof a['model'] !== 'string' || a['model'].length === 0) {
@@ -137,7 +138,13 @@ function validateAgent(raw: unknown, i: number, projectDir: string): AgentConfig
   // system_prompt_extra (optional)
   const systemPromptExtra = typeof a['system_prompt_extra'] === 'string' ? a['system_prompt_extra'] : ''
 
-  return { id, role, mode, provider, model, cli, tokenBudget, checkpoints, workingDir, env, systemPromptExtra }
+  return {
+    id, role, mode,
+    ...(provider !== undefined ? { provider } : {}),
+    model,
+    ...(cli !== undefined ? { cli } : {}),
+    tokenBudget, checkpoints, workingDir, env, systemPromptExtra,
+  }
 }
 
 // ─── session ─────────────────────────────────────────────────────────────────

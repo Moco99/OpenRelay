@@ -8,8 +8,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openrelay/config": "workspace:*",
     "@openrelay/core": "workspace:*",
-    "@openrelay/config": "workspace:*"
+    "@toon-format/toon": "^2.1.0",
+    "execa": "^9.6.1"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

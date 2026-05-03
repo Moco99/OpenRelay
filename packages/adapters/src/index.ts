@@ -1,2 +1,7 @@
-// Phase 2 — API adapter (Anthropic SDK) + CLI adapter (execa)
-export {}
+export { CliAdapter } from './cli.js'
+export { AnthropicAdapter } from './anthropic-api.js'
+export { OpenAIAdapter } from './openai-api.js'
+export { GoogleAdapter } from './google-api.js'
+export { createAdapter } from './factory.js'
+export { serializeWorkingMemory, serializeSessionSummary } from './toon.js'
+export type { IAgentAdapter, AgentChunk, ContextMessage, TokenUsage, SendOptions } from './types.js'

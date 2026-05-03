@@ -85,6 +85,12 @@ describe('validateRaw', () => {
       const config = validateRaw({ agents: [agent] }, '/project')
       expect(config.agents[0]!.checkpoints).toEqual([])
     })
+
+    it('defaults mode to cli when omitted', () => {
+      const { mode: _, ...agentWithoutMode } = baseCliAgent
+      const config = validateRaw({ agents: [agentWithoutMode] }, '/project')
+      expect(config.agents[0]!.mode).toBe('cli')
+    })
   })
 
   describe('agents array validation', () => {
