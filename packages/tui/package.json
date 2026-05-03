@@ -8,10 +8,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@openrelay/config": "workspace:*",
     "@openrelay/core": "workspace:*",
-    "@openrelay/config": "workspace:*"
+    "ink": "^7.0.1",
+    "react": "^19.2.5"
   },
   "devDependencies": {
+    "@types/react": "^19.2.14",
     "typescript": "^5.8.3"
   }
 }

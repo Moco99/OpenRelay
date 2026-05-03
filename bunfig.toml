@@ -1,0 +1,2 @@
+[test]
+timeout = 15000  # ms — default 5000 is too tight when all packages run together

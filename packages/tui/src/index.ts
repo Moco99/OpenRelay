@@ -1,2 +1,10 @@
-// Phase 4 — Ink/React TUI: Dashboard, ChatFeed, CheckpointPrompt
-export {}
+export { Dashboard }           from './components/Dashboard.js'
+export { AgentPanel }          from './components/AgentPanel.js'
+export { ChatFeed }            from './components/ChatFeed.js'
+export { CheckpointPrompt }    from './components/CheckpointPrompt.js'
+export { TokenBudgetBar }      from './components/TokenBudgetBar.js'
+export { StatusBar }           from './components/StatusBar.js'
+export { useBusMessages, useCheckpoint } from './hooks.js'
+export { messageColor, agentColor }      from './colors.js'
+export { formatTime, formatDuration, formatMessage, formatBudgetBar } from './format.js'
+export type { CheckpointDecision, ActiveCheckpoint } from './poll.js'
