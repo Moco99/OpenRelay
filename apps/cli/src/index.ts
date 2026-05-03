@@ -1,6 +1,13 @@
 #!/usr/bin/env bun
 import { Command } from 'commander'
+import { join } from 'path'
+import { createElement } from 'react'
+import { render } from 'ink'
 import { loadConfig, ConfigError } from '@openrelay/config'
+import { MessageBus } from '@openrelay/core'
+import { createAdapter } from '@openrelay/adapters'
+import { SessionManager } from '@openrelay/planner'
+import { Dashboard } from '@openrelay/tui'
 
 const program = new Command()
 
@@ -14,7 +21,7 @@ program
   .description('Run a task with the agent crew defined in crew.md')
   .option('-d, --dir <path>', 'Project directory', process.cwd())
   .option('--dry-run', 'Show plan without executing')
-  .action((task: string, options: { dir: string; dryRun?: boolean }) => {
+  .action(async (task: string, options: { dir: string; dryRun?: boolean }) => {
     let config
     try {
       config = loadConfig(options.dir)
@@ -32,11 +39,45 @@ program
       const backend = agent.mode === 'api' ? `${agent.provider}/${agent.model}` : `${agent.cli} (${agent.model})`
       console.log(`  · ${agent.id.padEnd(16)} ${agent.role.padEnd(10)} ${agent.mode}  ${backend}`)
     }
+
     if (options.dryRun) {
       console.log('[openrelay] Dry run — stopping before execution')
       return
     }
-    // Phase 5: SessionManager.start(task, config)
+
+    const plannerConfig = config.agents.find(a => a.role === 'planner')
+    if (!plannerConfig) {
+      console.error('[openrelay] No agent with role "planner" found in crew.md')
+      process.exit(1)
+    }
+
+    const bus = new MessageBus(join(options.dir, '.openrelay', 'session.db'))
+    const plannerAdapter = createAdapter(plannerConfig)
+    const manager = new SessionManager(bus, config, plannerAdapter)
+    const sessionId = manager.getSessionId()
+
+    const { unmount } = render(
+      createElement(Dashboard, {
+        bus,
+        sessionId,
+        agents: config.agents,
+        startedAt: Date.now(),
+      })
+    )
+
+    process.on('SIGINT', () => {
+      bus.updateSession(sessionId, { status: 'cancelled', endedAt: Date.now() })
+      unmount()
+      bus.close()
+      process.exit(0)
+    })
+
+    try {
+      await manager.run(task)
+    } finally {
+      unmount()
+      bus.close()
+    }
   })
 
 program

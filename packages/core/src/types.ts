@@ -82,7 +82,7 @@ export interface SessionMemory {
   tokens: number
 }
 
-// ─── Project configuration (parsed from crew.md) ──────────────────────────────
+// ─── Project configuration (parsed from crew.md) 
 
 export type Provider = 'anthropic' | 'google' | 'openai'
 

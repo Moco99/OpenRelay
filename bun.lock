@@ -15,11 +15,17 @@
         "openrelay": "./src/index.ts",
       },
       "dependencies": {
+        "@openrelay/adapters": "workspace:*",
         "@openrelay/config": "workspace:*",
         "@openrelay/core": "workspace:*",
+        "@openrelay/planner": "workspace:*",
+        "@openrelay/tui": "workspace:*",
         "commander": "^13.1.0",
+        "ink": "^7.0.1",
+        "react": "^19.2.5",
       },
       "devDependencies": {
+        "@types/react": "^19.2.14",
         "typescript": "^5.8.3",
       },
     },

@@ -1,4 +1,7 @@
 export { PlanGenerator } from './plan-generator.js'
 export { DeviationDetector } from './deviation-detector.js'
 export { BudgetTracker } from './budget-tracker.js'
-export type { Plan, PlanTask, DeviationReport, BudgetStatus } from './types.js'
+export { TaskExecutor } from './task-executor.js'
+export { CheckpointGate } from './checkpoint-gate.js'
+export { SessionManager } from './session-manager.js'
+export type { Plan, PlanTask, DeviationReport, BudgetStatus, CheckpointDecision } from './types.js'

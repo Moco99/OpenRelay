@@ -29,3 +29,5 @@ export interface DeviationReport {
 
 // 'warning' ≥80%, 'critical' ≥90%, 'exceeded' ≥100%
 export type BudgetStatus = 'ok' | 'warning' | 'critical' | 'exceeded'
+
+export type CheckpointDecision = 'approved' | 'rejected' | 'skipped'
