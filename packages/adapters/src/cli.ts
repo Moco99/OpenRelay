@@ -32,6 +32,7 @@ export class CliAdapter implements IAgentAdapter {
     })
 
     let textBuffer = ''
+    let hasRealUsage = false
 
     if (proc.stdout) {
       let partial = ''
@@ -60,6 +61,7 @@ export class CliAdapter implements IAgentAdapter {
               if (usage) {
                 this.usage.input  = usage.input_tokens  ?? this.usage.input
                 this.usage.output = usage.output_tokens ?? this.usage.output
+                hasRealUsage = true
               }
               // Verbose mode: response text is in result.result, not in streaming text events
               if (!textBuffer && typeof obj['result'] === 'string' && obj['result']) {
@@ -88,6 +90,7 @@ export class CliAdapter implements IAgentAdapter {
             if (usage) {
               this.usage.input  = usage.input_tokens  ?? this.usage.input
               this.usage.output = usage.output_tokens ?? this.usage.output
+              hasRealUsage = true
             }
             if (!textBuffer && typeof obj['result'] === 'string' && obj['result']) {
               textBuffer = obj['result']
@@ -107,7 +110,7 @@ export class CliAdapter implements IAgentAdapter {
     if (proc.exitCode !== 0 && proc.exitCode !== null) {
       yield { type: 'error', content: `CLI "${cliName}" exited with code ${proc.exitCode}` }
     } else {
-      this.usage.output += estimateTokens(textBuffer)
+      if (!hasRealUsage) this.usage.output += estimateTokens(textBuffer)
       yield { type: 'done', content: '' }
     }
   }

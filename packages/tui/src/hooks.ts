@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { MessageBus, Message } from '@openrelay/core'
+import type { MessageBus, Message, AgentState } from '@openrelay/core'
 import {
   fetchNewMessages,
   findNextCheckpoint,
@@ -7,6 +7,24 @@ import {
   publishCheckpointResponse,
 } from './poll.js'
 import type { ActiveCheckpoint, CheckpointDecision } from './poll.js'
+
+export function useAgentStates(bus: MessageBus, sessionId: string, intervalMs = 500): Map<string, AgentState> {
+  const [states, setStates] = useState<Map<string, AgentState>>(new Map())
+
+  useEffect(() => {
+    const poll = () => {
+      const list = bus.getAgentStates(sessionId)
+      if (list.length > 0) {
+        setStates(new Map(list.map(s => [s.agentId, s])))
+      }
+    }
+    poll()
+    const id = setInterval(poll, intervalMs)
+    return () => clearInterval(id)
+  }, [bus, sessionId, intervalMs])
+
+  return states
+}
 
 export function useBusMessages(bus: MessageBus, sessionId: string, intervalMs = 100): Message[] {
   const [messages, setMessages] = useState<Message[]>([])

@@ -2,7 +2,7 @@ import React from 'react'
 import { Box, Text } from 'ink'
 import type { AgentConfig, AgentState } from '@openrelay/core'
 import { agentColor } from '../colors.js'
-import { TokenBudgetBar } from './TokenBudgetBar.js'
+import { formatThinBar } from '../format.js'
 
 interface Props {
   agents: AgentConfig[]
@@ -18,14 +18,15 @@ export function AgentPanel({ agents, states }: Props) {
         const tokens = state ? state.tokensIn + state.tokensOut : 0
         const ratio  = tokens / agent.tokenBudget
         const status = state?.status ?? 'idle'
-        const statusColor = status === 'working' ? 'green' : status === 'error' ? 'red' : 'gray'
+        const circleColor = status === 'working' ? 'green' : status === 'error' ? 'red' : 'gray'
+        const barColor    = ratio >= 1.0 ? 'red' : ratio >= 0.9 ? 'redBright' : ratio >= 0.8 ? 'yellow' : 'green'
         return (
           <Box key={agent.id} flexDirection="column" marginTop={1}>
             <Box gap={1}>
+              <Text color={circleColor}>●</Text>
               <Text color={agentColor(agent.id)} bold>{agent.id}</Text>
-              <Text color={statusColor}>{status}</Text>
             </Box>
-            <TokenBudgetBar ratio={ratio} width={14} />
+            <Text color={barColor}>{formatThinBar(ratio, 8)} {Math.round(ratio * 100)}%</Text>
             <Text color="gray">{tokens.toLocaleString()} / {agent.tokenBudget.toLocaleString()}</Text>
           </Box>
         )

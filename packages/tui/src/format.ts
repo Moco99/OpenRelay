@@ -22,3 +22,8 @@ export function formatBudgetBar(ratio: number, width = 20): string {
   const filled = Math.min(Math.round(ratio * width), width)
   return '█'.repeat(filled) + '░'.repeat(width - filled)
 }
+
+export function formatThinBar(ratio: number, width = 8): string {
+  const filled = Math.min(Math.round(ratio * width), width)
+  return '▰'.repeat(filled) + '▱'.repeat(width - filled)
+}

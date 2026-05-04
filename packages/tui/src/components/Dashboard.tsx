@@ -1,8 +1,10 @@
 import React from 'react'
 import { Box, Text } from 'ink'
-import type { AgentConfig, AgentState, MessageBus } from '@openrelay/core'
-import { useBusMessages, useCheckpoint } from '../hooks.js'
+import type { AgentConfig, MessageBus } from '@openrelay/core'
+import { useBusMessages, useCheckpoint, useAgentStates } from '../hooks.js'
+import { Header } from './Header.js'
 import { AgentPanel } from './AgentPanel.js'
+import { PlanPanel } from './PlanPanel.js'
 import { ChatFeed } from './ChatFeed.js'
 import { CheckpointPrompt } from './CheckpointPrompt.js'
 import { StatusBar } from './StatusBar.js'
@@ -12,11 +14,12 @@ interface Props {
   sessionId: string
   agents: AgentConfig[]
   startedAt: number
-  agentStates?: Map<string, AgentState>
+  workingDir?: string
 }
 
-export function Dashboard({ bus, sessionId, agents, startedAt, agentStates = new Map() }: Props) {
-  const messages = useBusMessages(bus, sessionId)
+export function Dashboard({ bus, sessionId, agents, startedAt, workingDir = process.cwd() }: Props) {
+  const messages    = useBusMessages(bus, sessionId)
+  const agentStates = useAgentStates(bus, sessionId)
   const { active, respond } = useCheckpoint(bus, sessionId, messages)
 
   const totalTokens = Array.from(agentStates.values())
@@ -24,12 +27,10 @@ export function Dashboard({ bus, sessionId, agents, startedAt, agentStates = new
 
   return (
     <Box flexDirection="column">
-      <Box paddingX={1}>
-        <Text bold color="cyan">OpenRelay</Text>
-        <Text color="gray"> — session {sessionId.slice(0, 8)}</Text>
-      </Box>
+      <Header agents={agents} workingDir={workingDir} />
       <Box flexGrow={1}>
         <AgentPanel agents={agents} states={agentStates} />
+        <PlanPanel bus={bus} sessionId={sessionId} messages={messages} />
         <Box flexDirection="column" flexGrow={1}>
           <ChatFeed messages={messages} />
           {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}

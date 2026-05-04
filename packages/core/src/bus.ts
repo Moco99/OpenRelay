@@ -174,6 +174,13 @@ export class MessageBus {
     return row ? rowToAgentState(row) : null
   }
 
+  getAgentStates(sessionId: string): AgentState[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM agent_state WHERE session_id = ?',
+    ).all(sessionId) as RawAgentState[]
+    return rows.map(rowToAgentState)
+  }
+
   createTask(task: Omit<Task, 'status' | 'retries' | 'actualOutput' | 'deviationReport' | 'createdAt' | 'updatedAt'>): Task {
     const now = Date.now()
     const full: Task = { ...task, status: 'pending', retries: 0, actualOutput: null, deviationReport: null, createdAt: now, updatedAt: now }

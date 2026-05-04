@@ -15,14 +15,28 @@ import { Dashboard } from '@openrelay/tui'
 
 const KNOWN_CLIS = ['claude', 'gemini', 'codex', 'opencode'] as const
 
-const DEFAULT_MODELS: Record<string, { planner: string; coder: string }> = {
-  claude:   { planner: 'claude-opus-4-7',        coder: 'claude-sonnet-4-6' },
-  gemini:   { planner: 'gemini-3.1-pro-preview', coder: 'gemini-2.5-pro' },
-  codex:    { planner: 'o3',                     coder: 'o4-mini' },
-  opencode: { planner: 'claude-opus-4-7',        coder: 'claude-sonnet-4-6' },
+const AVAILABLE_MODELS: Record<string, { planner: string[]; coder: string[] }> = {
+  claude: {
+    planner: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    coder:   ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
+  },
+  gemini: {
+    planner: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    coder:   ['gemini-2.5-pro', 'gemini-2.5-flash'],
+  },
+  codex: {
+    planner: ['o3', 'o4-mini'],
+    coder:   ['o4-mini', 'o3'],
+  },
+  opencode: {
+    planner: ['claude-opus-4-7', 'claude-sonnet-4-6'],
+    coder:   ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+  },
 }
 
 const TOKEN_BUDGETS = { planner: 50000, coder: 200000 }
+
+const REPL_COMMANDS = ['/init', '/config', '/run', '/status', '/history', '/help', '/exit']
 
 const CREW_SKELETON = `\
 # OpenRelay crew configuration
@@ -55,6 +69,20 @@ async function askChoice(rl: Interface, question: string, choices: string[]): Pr
     if (answer === '' || answer === 'q') return null
     if (choices.includes(answer)) return answer
     console.log(`    Must be one of: ${choices.join(', ')} (or press Enter to cancel)`)
+  }
+}
+
+async function askNumbered(rl: Interface, label: string, options: string[]): Promise<string | null> {
+  options.forEach((o, i) => {
+    const def = i === 0 ? '  (default)' : ''
+    console.log(`    ${i + 1}) ${o}${def}`)
+  })
+  while (true) {
+    const answer = (await ask(rl, `  ${label} [1]: `)).trim()
+    if (answer === '' || answer === 'q') return options[0] ?? null
+    const n = parseInt(answer, 10)
+    if (!isNaN(n) && n >= 1 && n <= options.length) return options[n - 1]!
+    console.log(`    Enter a number between 1 and ${options.length} (or press Enter for default)`)
   }
 }
 
@@ -120,15 +148,24 @@ async function cmdConfig(dir: string, rl: Interface) {
 
   console.log(`[openrelay] Detected: ${detected.join(', ')}`)
   console.log('  A planner uses the strongest model; an executor uses an intermediate one.\n')
+  console.log('  (Press Enter or q to cancel at any prompt)\n')
 
   const plannerCli = await askChoice(rl, `  Planner CLI [${detected.join('/')}]: `, detected)
   if (!plannerCli) { console.log('[openrelay] Cancelled.'); return }
-  const plannerModel = DEFAULT_MODELS[plannerCli]!.planner
+
+  const plannerModels = AVAILABLE_MODELS[plannerCli]?.planner ?? [plannerCli]
+  console.log(`  Planner model (${plannerCli}):`)
+  const plannerModel = await askNumbered(rl, 'Select planner model', plannerModels)
+  if (!plannerModel) { console.log('[openrelay] Cancelled.'); return }
   console.log(`    → ${plannerModel}`)
 
-  const coderCli = await askChoice(rl, `  Executor CLI [${detected.join('/')}]: `, detected)
+  const coderCli = await askChoice(rl, `\n  Executor CLI [${detected.join('/')}]: `, detected)
   if (!coderCli) { console.log('[openrelay] Cancelled.'); return }
-  const coderModel = DEFAULT_MODELS[coderCli]!.coder
+
+  const coderModels = AVAILABLE_MODELS[coderCli]?.coder ?? [coderCli]
+  console.log(`  Executor model (${coderCli}):`)
+  const coderModel = await askNumbered(rl, 'Select executor model', coderModels)
+  if (!coderModel) { console.log('[openrelay] Cancelled.'); return }
   console.log(`    → ${coderModel}`)
 
   const agents = [
@@ -236,6 +273,7 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
       sessionId,
       agents: config.agents,
       startedAt: Date.now(),
+      workingDir: dir,
     })
   )
 
@@ -295,9 +333,15 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: Inter
 
 async function startInteractiveMode() {
   console.log('OpenRelay v0.1.0')
-  console.log('Type /help for commands, /exit to quit.\n')
+  console.log('Type /help for commands, Tab after / for autocomplete, /exit to quit.\n')
   const dir = process.cwd()
-  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ' })
+
+  const completer = (line: string): [string[], string] => {
+    const completions = REPL_COMMANDS.filter(c => c.startsWith(line))
+    return [completions.length ? completions : REPL_COMMANDS, line]
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ', completer })
   rl.prompt()
   let busy = false
 
@@ -341,6 +385,7 @@ program
   .option('--dry-run', 'Show plan without executing')
   .action(async (task: string, options: { dir: string; dryRun?: boolean }) => {
     await cmdRun(task, options.dir, options.dryRun)
+    await startInteractiveMode()
   })
 
 program
