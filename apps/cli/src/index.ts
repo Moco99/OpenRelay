@@ -2,7 +2,7 @@
 import { Command } from 'commander'
 import { join } from 'path'
 import { existsSync, writeFileSync } from 'fs'
-import { createInterface, type Interface } from 'readline'
+import { createInterface, emitKeypressEvents, type Interface } from 'readline'
 import { createElement } from 'react'
 import { render } from 'ink'
 import { loadConfig, ConfigError } from '@openrelay/config'
@@ -11,7 +11,15 @@ import { createAdapter } from '@openrelay/adapters'
 import { SessionManager } from '@openrelay/planner'
 import { Dashboard } from '@openrelay/tui'
 
+// ─── ANSI colors ──────────────────────────────────────────────────────────────
+
+const L  = '\x1b[95m'  // lila (bright magenta)
+const DM = '\x1b[2m'   // dim
+const RS = '\x1b[0m'   // reset
+
 // ─── Constants ────────────────────────────────────────────────────────────────
+
+const VERSION = 'v0.1.0'
 
 const KNOWN_CLIS = ['claude', 'gemini', 'codex', 'opencode'] as const
 
@@ -36,20 +44,65 @@ const AVAILABLE_MODELS: Record<string, { planner: string[]; coder: string[] }> =
 
 const TOKEN_BUDGETS = { planner: 50000, coder: 200000 }
 
-const REPL_COMMANDS = ['/init', '/config', '/run', '/status', '/history', '/help', '/exit']
+const REPL_COMMANDS = [
+  { cmd: '/init',    desc: 'Initialize crew.md in current directory' },
+  { cmd: '/config',  desc: 'Configure agents interactively' },
+  { cmd: '/run',     desc: 'Run a task with your crew' },
+  { cmd: '/status',  desc: 'Show latest session status' },
+  { cmd: '/history', desc: 'Show past sessions' },
+  { cmd: '/help',    desc: 'Show available commands' },
+  { cmd: '/exit',    desc: 'Exit OpenRelay' },
+]
 
 const CREW_SKELETON = `\
-# OpenRelay crew configuration
-# Run /config in the OpenRelay CLI to configure your agents
-
 [session]
 max_retries = 2
 summary_interval = 10
 checkpoint_timeout = 300
-
-# No agents configured yet.
-# Run /config to set up your crew.
 `
+
+// ─── ASCII Banner ──────────────────────────────────────────────────────────────
+
+// O = chars 0-8 (9 chars) · PEN = 9-34 · R = 35-42 (8 chars) · ELAY = 43+
+const BANNER_LINES = [
+  ' ██████╗ ██████╗ ███████╗███╗   ██╗██████╗ ███████╗██╗      █████╗ ██╗   ██╗',
+  '██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██╔════╝██║     ██╔══██╗╚██╗ ██╔╝',
+  '██║   ██║██████╔╝█████╗  ██╔██╗ ██║██████╔╝█████╗  ██║     ███████║ ╚████╔╝ ',
+  '██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔══██╗██╔══╝  ██║     ██╔══██║  ╚██╔╝  ',
+  '╚██████╔╝██║     ███████╗██║ ╚████║██║  ██║███████╗███████╗██║  ██║   ██║   ',
+  ' ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝  ',
+]
+
+function printBanner(dir: string) {
+  const lines = BANNER_LINES.map(line => {
+    const o    = line.slice(0, 9)
+    const pen  = line.slice(9, 35)
+    const r    = line.slice(35, 43)
+    const elay = line.slice(43)
+    return `${L}${o}${RS}${pen}${L}${r}${RS}${elay}`
+  })
+  console.log(lines.join('\n'))
+  console.log()
+  console.log(`  ${L}${VERSION}${RS}`)
+  console.log()
+
+  try {
+    const cfg = loadConfig(dir)
+    const p = cfg.agents.find(a => a.role === 'planner')
+    const e = cfg.agents.find(a => a.role === 'coder')
+    if (p) {
+      const pb = p.mode === 'api'  ? `${p.provider}/${p.model}` : `${p.cli}/${p.model}`
+      const eb = e ? (e.mode === 'api' ? `${e.provider}/${e.model}` : `${e.cli}/${e.model}`) : '-'
+      console.log(`  ${L}planner${RS}  ${pb}   ${L}executor${RS}  ${eb}`)
+      console.log(`  ${DM}${dir}${RS}`)
+    }
+  } catch {
+    console.log(`  ${DM}No crew configured — run /config to set up agents.${RS}`)
+  }
+  console.log()
+  console.log(`  ${DM}Type / to see commands · Tab for autocomplete · /exit to quit${RS}`)
+  console.log()
+}
 
 // ─── CLI detection ────────────────────────────────────────────────────────────
 
@@ -57,63 +110,152 @@ function detectClis(): string[] {
   return KNOWN_CLIS.filter(c => Bun.which(c) !== null)
 }
 
-// ─── Readline helpers ─────────────────────────────────────────────────────────
+// ─── Raw config wizard (no Ink — avoids readline/stdin conflict) ───────────────
 
-function ask(rl: Interface, question: string): Promise<string> {
-  return new Promise(resolve => rl.question(question, resolve))
-}
+interface AgentSlot { cli: string; model: string }
+interface ConfigResult { planner: AgentSlot; executor: AgentSlot; saved: boolean }
 
-async function askChoice(rl: Interface, question: string, choices: string[]): Promise<string | null> {
-  while (true) {
-    const answer = (await ask(rl, question)).trim()
-    if (answer === '' || answer === 'q') return null
-    if (choices.includes(answer)) return answer
-    console.log(`    Must be one of: ${choices.join(', ')} (or press Enter to cancel)`)
-  }
-}
+async function runRawConfigWizard(
+  detected: string[],
+  initial?: { planner: AgentSlot; executor: AgentSlot },
+): Promise<ConfigResult | null> {
+  return new Promise<ConfigResult | null>(resolve => {
+    // Temporarily remove readline's keypress listeners to avoid conflict
+    const savedListeners = process.stdin.rawListeners('keypress').slice()
+    process.stdin.removeAllListeners('keypress')
 
-async function askNumbered(rl: Interface, label: string, options: string[]): Promise<string | null> {
-  options.forEach((o, i) => {
-    const def = i === 0 ? '  (default)' : ''
-    console.log(`    ${i + 1}) ${o}${def}`)
+    emitKeypressEvents(process.stdin)
+    if (process.stdin.isTTY) process.stdin.setRawMode(true)
+    process.stdin.resume()
+
+    let focus = 0  // 0=plannerCli 1=plannerModel 2=executorCli 3=executorModel
+    let plannerCli    = initial?.planner.cli   ?? detected[0] ?? ''
+    let executorCli   = initial?.executor.cli  ?? detected[0] ?? ''
+    let plannerModel  = initial?.planner.model  ?? ''
+    let executorModel = initial?.executor.model ?? ''
+
+    const pModels = () => AVAILABLE_MODELS[plannerCli]?.planner  ?? [plannerCli]
+    const eModels = () => AVAILABLE_MODELS[executorCli]?.coder   ?? [executorCli]
+    const rPModel = () => { const m = pModels(); return m.includes(plannerModel)  ? plannerModel  : m[0]! }
+    const rEModel = () => { const m = eModels(); return m.includes(executorModel) ? executorModel : m[0]! }
+
+    function cycleStr(cur: string, list: string[], dir: 1 | -1): string {
+      const i = list.indexOf(cur)
+      return list[(i === -1 ? 0 : (i + dir + list.length) % list.length)]!
+    }
+
+    function fRow(idx: number, label: string, value: string, opts: string[]): string {
+      const active = focus === idx
+      const i = opts.indexOf(value)
+      const count = `${DM}(${i + 1}/${opts.length})${RS}`
+      const ind = active ? `${L}▶${RS}` : ' '
+      const lbl = (active ? `${L}` : `${DM}`) + label.padEnd(6) + RS
+      const val = active ? `${L}${value}${RS}` : value
+      const arr = active
+        ? `${L}◀${RS} ${val} ${L}▶${RS}  ${count}`
+        : `  ${val}    ${count}`
+      return `    ${ind} ${lbl}  ${arr}`
+    }
+
+    const WIZARD_HEIGHT = 15
+
+    function draw() {
+      const rows = process.stdout.rows ?? 24
+      const startRow = Math.max(1, rows - WIZARD_HEIGHT)
+      process.stdout.write('\x1b[2J')
+      process.stdout.write(`\x1b[${startRow}H`)
+      const out = [
+        '',
+        `  ${L}Configure Crew${RS}`,
+        `  ${L}${'─'.repeat(50)}${RS}`,
+        '',
+        `  ${L}Planner${RS}`,
+        fRow(0, 'CLI',   plannerCli,  detected),
+        fRow(1, 'Model', rPModel(),   pModels()),
+        '',
+        `  ${L}Executor${RS}`,
+        fRow(2, 'CLI',   executorCli, detected),
+        fRow(3, 'Model', rEModel(),   eModels()),
+        '',
+        `  ${L}${'─'.repeat(50)}${RS}`,
+        `  ${DM}↑↓ navigate · ←→ or Enter change ·${RS} ${L}S${RS}${DM} save ·${RS} ${L}Q${RS}${DM} cancel${RS}`,
+        '',
+      ]
+      process.stdout.write(out.join('\n'))
+    }
+
+    function cleanup() {
+      process.stdin.removeAllListeners('keypress')
+      if (process.stdin.isTTY) process.stdin.setRawMode(false)
+      process.stdin.pause()
+      for (const l of savedListeners) process.stdin.on('keypress', l as any)
+    }
+
+    function done(saved: boolean) {
+      cleanup()
+      resolve(saved
+        ? { planner: { cli: plannerCli, model: rPModel() }, executor: { cli: executorCli, model: rEModel() }, saved: true }
+        : null)
+    }
+
+    function onKey(str: string, key: { name: string; ctrl: boolean }) {
+      if (!key) return
+      if (key.ctrl && key.name === 'c') { cleanup(); process.exit(0) }
+
+      switch (key.name) {
+        case 'up':   focus = Math.max(0, focus - 1); break
+        case 'down': focus = Math.min(3, focus + 1); break
+        case 'left':
+        case 'right':
+        case 'return': {
+          const dir: 1 | -1 = key.name === 'left' ? -1 : 1
+          if (focus === 0) { plannerCli  = cycleStr(plannerCli,  detected, dir); plannerModel  = pModels()[0]! }
+          if (focus === 1) { plannerModel  = cycleStr(rPModel(), pModels(), dir) }
+          if (focus === 2) { executorCli = cycleStr(executorCli, detected, dir); executorModel = eModels()[0]! }
+          if (focus === 3) { executorModel = cycleStr(rEModel(), eModels(), dir) }
+          break
+        }
+      }
+
+      if (str === 's' || str === 'S') { done(true);  return }
+      if (str === 'q' || str === 'Q' || key.name === 'escape') { done(false); return }
+
+      draw()
+    }
+
+    process.stdin.on('keypress', onKey)
+    draw()
   })
-  while (true) {
-    const answer = (await ask(rl, `  ${label} [1]: `)).trim()
-    if (answer === '' || answer === 'q') return options[0] ?? null
-    const n = parseInt(answer, 10)
-    if (!isNaN(n) && n >= 1 && n <= options.length) return options[n - 1]!
-    console.log(`    Enter a number between 1 and ${options.length} (or press Enter for default)`)
-  }
 }
 
 // ─── crew.md writer ───────────────────────────────────────────────────────────
 
-function writeCrewMd(
-  agents: Array<{ id: string; cli: string; role: 'planner' | 'coder'; model: string }>,
-  dir: string,
-) {
+function writeCrewMd(planner: AgentSlot, executor: AgentSlot, dir: string) {
   const lines = [
     '[session]',
     'max_retries = 2',
     'summary_interval = 10',
     'checkpoint_timeout = 300',
     '',
+    '[[agents]]',
+    'id = "orchestrator"',
+    'role = "planner"',
+    `cli = "${planner.cli}"`,
+    `model = "${planner.model}"`,
+    `token_budget = ${TOKEN_BUDGETS.planner}`,
+    'working_dir = "."',
+    'checkpoints = ["plan_ready", "deviation_found"]',
+    '',
+    '[[agents]]',
+    'id = "executor"',
+    'role = "coder"',
+    `cli = "${executor.cli}"`,
+    `model = "${executor.model}"`,
+    `token_budget = ${TOKEN_BUDGETS.coder}`,
+    'working_dir = "."',
+    'checkpoints = []',
+    '',
   ]
-  for (const a of agents) {
-    const budget = TOKEN_BUDGETS[a.role]
-    const cps = a.role === 'planner' ? '["plan_ready", "deviation_found"]' : '[]'
-    lines.push(
-      '[[agents]]',
-      `id = "${a.id}"`,
-      `role = "${a.role}"`,
-      `cli = "${a.cli}"`,
-      `model = "${a.model}"`,
-      `token_budget = ${budget}`,
-      'working_dir = "."',
-      `checkpoints = ${cps}`,
-      '',
-    )
-  }
   writeFileSync(join(dir, 'crew.md'), lines.join('\n'))
 }
 
@@ -121,14 +263,11 @@ function writeCrewMd(
 
 async function cmdInit(dir: string, force: boolean) {
   const detected = detectClis()
-
   if (detected.length === 0) {
-    console.log('[openrelay] No CLI agents detected.')
-    console.log('  * No CLI agents detected, please make sure to install one so OpenRelay can work correctly.')
+    console.log('[openrelay] No CLI agents detected. Install claude, gemini, or codex first.')
   } else {
-    console.log(`[openrelay] Detected CLI agents: ${detected.join(', ')}`)
+    console.log(`[openrelay] Detected: ${detected.join(', ')}`)
   }
-
   const target = join(dir, 'crew.md')
   if (existsSync(target) && !force) {
     console.log('[openrelay] crew.md already exists. Use /init --force to overwrite.')
@@ -146,49 +285,38 @@ async function cmdConfig(dir: string, rl: Interface) {
     return
   }
 
-  console.log(`[openrelay] Detected: ${detected.join(', ')}`)
-  console.log('  A planner uses the strongest model; an executor uses an intermediate one.\n')
-  console.log('  (Press Enter or q to cancel at any prompt)\n')
+  let initial: { planner: AgentSlot; executor: AgentSlot } | undefined
+  try {
+    const cfg = loadConfig(dir)
+    const p = cfg.agents.find(a => a.role === 'planner')
+    const e = cfg.agents.find(a => a.role === 'coder')
+    if (p && e) initial = { planner: { cli: p.cli ?? '', model: p.model }, executor: { cli: e.cli ?? '', model: e.model } }
+  } catch { /* no existing config */ }
 
-  const plannerCli = await askChoice(rl, `  Planner CLI [${detected.join('/')}]: `, detected)
-  if (!plannerCli) { console.log('[openrelay] Cancelled.'); return }
+  rl.pause()
+  const result = await runRawConfigWizard(detected, initial)
+  rl.resume()
 
-  const plannerModels = AVAILABLE_MODELS[plannerCli]?.planner ?? [plannerCli]
-  console.log(`  Planner model (${plannerCli}):`)
-  const plannerModel = await askNumbered(rl, 'Select planner model', plannerModels)
-  if (!plannerModel) { console.log('[openrelay] Cancelled.'); return }
-  console.log(`    → ${plannerModel}`)
+  process.stdout.write('\x1b[2J\x1b[H')
 
-  const coderCli = await askChoice(rl, `\n  Executor CLI [${detected.join('/')}]: `, detected)
-  if (!coderCli) { console.log('[openrelay] Cancelled.'); return }
+  if (!result) {
+    printBanner(dir)
+    console.log('[openrelay] Cancelled — crew.md unchanged.')
+    return
+  }
 
-  const coderModels = AVAILABLE_MODELS[coderCli]?.coder ?? [coderCli]
-  console.log(`  Executor model (${coderCli}):`)
-  const coderModel = await askNumbered(rl, 'Select executor model', coderModels)
-  if (!coderModel) { console.log('[openrelay] Cancelled.'); return }
-  console.log(`    → ${coderModel}`)
-
-  const agents = [
-    { id: 'orchestrator', cli: plannerCli, role: 'planner' as const, model: plannerModel },
-    { id: 'executor',     cli: coderCli,   role: 'coder'   as const, model: coderModel  },
-  ]
-  writeCrewMd(agents, dir)
-  console.log('\n[openrelay] crew.md updated. Run /run "<task>" to start.')
+  writeCrewMd(result.planner, result.executor, dir)
+  printBanner(dir)
+  console.log('[openrelay] crew.md updated.')
+  console.log()
 }
 
 async function cmdStatus(dir: string) {
   const dbPath = join(dir, '.openrelay', 'session.db')
-  if (!existsSync(dbPath)) {
-    console.log('[openrelay] No sessions found.')
-    return
-  }
+  if (!existsSync(dbPath)) { console.log('[openrelay] No sessions found.'); return }
   const bus = new MessageBus(dbPath)
   const sessions = bus.getSessions(1)
-  if (sessions.length === 0) {
-    console.log('[openrelay] No sessions found.')
-    bus.close()
-    return
-  }
+  if (!sessions.length) { console.log('[openrelay] No sessions found.'); bus.close(); return }
   const s = sessions[0]!
   const tasks = bus.getTasks(s.id)
   const done = tasks.filter(t => t.status === 'done').length
@@ -206,24 +334,17 @@ async function cmdStatus(dir: string) {
 
 async function cmdHistory(dir: string, limit: number) {
   const dbPath = join(dir, '.openrelay', 'session.db')
-  if (!existsSync(dbPath)) {
-    console.log('[openrelay] No sessions found.')
-    return
-  }
+  if (!existsSync(dbPath)) { console.log('[openrelay] No sessions found.'); return }
   const bus = new MessageBus(dbPath)
   const sessions = bus.getSessions(limit)
-  if (sessions.length === 0) {
-    console.log('[openrelay] No sessions found.')
-    bus.close()
-    return
-  }
+  if (!sessions.length) { console.log('[openrelay] No sessions found.'); bus.close(); return }
   console.log('DATE                 TASK                                     STATUS     DURATION')
   console.log('─'.repeat(80))
   for (const s of sessions) {
-    const date = new Date(s.startedAt).toLocaleString().padEnd(20)
-    const task = s.originalTask.slice(0, 40).padEnd(40)
+    const date   = new Date(s.startedAt).toLocaleString().padEnd(20)
+    const task   = s.originalTask.slice(0, 40).padEnd(40)
     const status = s.status.padEnd(10)
-    const dur = s.endedAt ? `${Math.round((s.endedAt - s.startedAt) / 1000)}s` : 'running'
+    const dur    = s.endedAt ? `${Math.round((s.endedAt - s.startedAt) / 1000)}s` : 'running'
     console.log(`${date} ${task} ${status} ${dur}`)
   }
   bus.close()
@@ -234,75 +355,69 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
   try {
     config = loadConfig(dir)
   } catch (e) {
-    if (e instanceof ConfigError) {
-      console.error(`[openrelay] Config error: ${e.message}`)
-      process.exit(1)
-    }
+    if (e instanceof ConfigError) { console.error(`[openrelay] ${e.message}`); process.exit(1) }
     throw e
   }
 
-  console.log(`[openrelay] Task:    ${task}`)
-  console.log(`[openrelay] Crew:    ${config.agents.length} agent(s) loaded`)
-  for (const agent of config.agents) {
-    const backend = agent.mode === 'api' ? `${agent.provider}/${agent.model}` : `${agent.cli} (${agent.model})`
-    console.log(`  · ${agent.id.padEnd(16)} ${agent.role.padEnd(10)} ${agent.mode}  ${backend}`)
+  console.log(`[openrelay] Task: ${task}`)
+  for (const a of config.agents) {
+    const backend = a.mode === 'api' ? `${a.provider}/${a.model}` : `${a.cli} (${a.model})`
+    console.log(`  · ${a.id.padEnd(14)} ${a.role.padEnd(8)} ${backend}`)
   }
 
-  if (dryRun) {
-    console.log('[openrelay] Dry run — stopping before execution')
-    return
-  }
+  if (dryRun) { console.log('[openrelay] Dry run — stopping before execution'); return }
 
   const plannerConfig = config.agents.find(a => a.role === 'planner')
-  if (!plannerConfig) {
-    console.error('[openrelay] No agent with role "planner" found in crew.md')
-    process.exit(1)
-  }
+  if (!plannerConfig) { console.error('[openrelay] No planner agent in crew.md'); process.exit(1) }
 
-  const bus = new MessageBus(join(dir, '.openrelay', 'session.db'))
+  const bus            = new MessageBus(join(dir, '.openrelay', 'session.db'))
   const plannerAdapter = createAdapter(plannerConfig)
-  const manager = new SessionManager(bus, config, plannerAdapter)
-  const sessionId = manager.getSessionId()
+  const manager        = new SessionManager(bus, config, plannerAdapter)
+  const sessionId      = manager.getSessionId()
 
-  // Pause readline so Ink can take full control of the terminal
   rl?.pause()
-
   const { unmount } = render(
-    createElement(Dashboard, {
-      bus,
-      sessionId,
-      agents: config.agents,
-      startedAt: Date.now(),
-      workingDir: dir,
-    })
+    createElement(Dashboard, { bus, sessionId, agents: config.agents, startedAt: Date.now(), workingDir: dir })
   )
 
-  process.on('SIGINT', () => {
+  const sigintHandler = () => {
     bus.updateSession(sessionId, { status: 'cancelled', endedAt: Date.now() })
     unmount()
     bus.close()
     rl?.resume()
     process.exit(0)
-  })
+  }
+  process.on('SIGINT', sigintHandler)
 
+  let completed = false
   try {
     await manager.run(task)
+    completed = true
   } finally {
+    process.off('SIGINT', sigintHandler)
     unmount()
+
+    if (completed) {
+      const tasks  = bus.getTasks(sessionId)
+      const done   = tasks.filter(t => t.status === 'done').length
+      const failed = tasks.filter(t => t.status === 'failed').length
+      const states = bus.getAgentStates(sessionId)
+      const total  = states.reduce((s, a) => s + a.tokensIn + a.tokensOut, 0)
+      console.log()
+      console.log(`  ${L}✓${RS} Complete — ${done}/${tasks.length} tasks${failed ? `  ${L}✗${RS} ${failed} failed` : ''}   ${total.toLocaleString()} tokens`)
+      console.log()
+    }
+
     bus.close()
     rl?.resume()
   }
 }
 
 function printHelp() {
-  console.log('Commands:')
-  console.log('  /init [--force]         Initialize crew.md in current directory')
-  console.log('  /config                 Configure agents interactively')
-  console.log('  /run <task>             Run a task with your crew')
-  console.log('  /status                 Show latest session status')
-  console.log('  /history [--limit n]    Show past sessions (default: 10)')
-  console.log('  /help                   Show this help')
-  console.log('  /exit                   Exit OpenRelay')
+  console.log(`Commands:`)
+  for (const { cmd, desc } of REPL_COMMANDS) {
+    console.log(`  ${L}${cmd.padEnd(14)}${RS} ${desc}`)
+  }
 }
 
 // ─── Interactive REPL ─────────────────────────────────────────────────────────
@@ -314,8 +429,7 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: Inter
     case 'status':  await cmdStatus(dir); break
     case 'history': {
       const li = args.indexOf('--limit')
-      const limit = li !== -1 ? parseInt(args[li + 1] ?? '10', 10) : 10
-      await cmdHistory(dir, limit)
+      await cmdHistory(dir, li !== -1 ? parseInt(args[li + 1] ?? '10', 10) : 10)
       break
     }
     case 'run': {
@@ -327,25 +441,70 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: Inter
     case 'help':  printHelp(); break
     case 'exit':
     case 'quit':  rl.close(); process.exit(0); break
-    default:      console.log(`[openrelay] Unknown command: /${cmd}. Type /help for a list.`)
+    default:      console.log(`[openrelay] Unknown command: /${cmd}. Type /help.`)
   }
 }
 
-async function startInteractiveMode() {
-  console.log('OpenRelay v0.1.0')
-  console.log('Type /help for commands, Tab after / for autocomplete, /exit to quit.\n')
-  const dir = process.cwd()
+async function startInteractiveMode(dir = process.cwd()) {
+  printBanner(dir)
 
   const completer = (line: string): [string[], string] => {
-    const completions = REPL_COMMANDS.filter(c => c.startsWith(line))
-    return [completions.length ? completions : REPL_COMMANDS, line]
+    const cmds = REPL_COMMANDS.map(r => r.cmd)
+    const hits  = cmds.filter(c => c.startsWith(line))
+    return [hits.length ? hits : cmds, line]
   }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: '> ', completer })
+  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: `${L}>${RS} `, completer })
   rl.prompt()
+
   let busy = false
+  let dropdownLines = 0
+
+  // ── Live autocomplete dropdown ───────────────────────────────────────────────
+
+  function clearDropdown() {
+    if (dropdownLines === 0) return
+    process.stdout.write('\x1b[s')
+    for (let i = 0; i < dropdownLines; i++) {
+      process.stdout.write(`\x1b[${i + 1}B\x1b[2K`)
+    }
+    process.stdout.write('\x1b[u')
+    dropdownLines = 0
+  }
+
+  function showDropdown(line: string) {
+    clearDropdown()
+    if (!line.startsWith('/')) return
+
+    const matches = REPL_COMMANDS
+      .filter(r => r.cmd.startsWith(line) && r.cmd !== line)
+    if (matches.length === 0) return
+
+    process.stdout.write('\x1b[s')
+    for (const { cmd, desc } of matches.slice(0, 8)) {
+      process.stdout.write(`\n\x1b[2K  ${L}${cmd}${RS}  ${DM}${desc}${RS}`)
+      dropdownLines++
+    }
+    process.stdout.write('\x1b[u')
+  }
+
+  // readline already enables keypress events on a TTY stdin internally
+  process.stdin.on('keypress', (_str, key) => {
+    if (busy) return
+    setImmediate(() => {
+      if (key?.name === 'return' || key?.name === 'enter') {
+        clearDropdown()
+        return
+      }
+      const line = (rl as any).line ?? ''
+      showDropdown(line)
+    })
+  })
+
+  // ── Line handler ─────────────────────────────────────────────────────────────
 
   rl.on('line', async (line) => {
+    clearDropdown()
     if (busy) return
     const input = line.trim()
     if (!input) { rl.prompt(); return }
@@ -372,24 +531,18 @@ async function startInteractiveMode() {
 // ─── Commander (non-interactive) ──────────────────────────────────────────────
 
 const program = new Command()
+program.name('openrelay').description('Multi-agent orchestration for terminal AI agents').version(VERSION)
 
-program
-  .name('openrelay')
-  .description('Multi-agent orchestration for terminal AI agents')
-  .version('0.1.0')
-
-program
-  .command('run <task>')
+program.command('run <task>')
   .description('Run a task with the agent crew defined in crew.md')
   .option('-d, --dir <path>', 'Project directory', process.cwd())
   .option('--dry-run', 'Show plan without executing')
   .action(async (task: string, options: { dir: string; dryRun?: boolean }) => {
     await cmdRun(task, options.dir, options.dryRun)
-    await startInteractiveMode()
+    await startInteractiveMode(options.dir)
   })
 
-program
-  .command('init')
+program.command('init')
   .description('Initialize a crew.md in the current directory')
   .option('-d, --dir <path>', 'Project directory', process.cwd())
   .option('--force', 'Overwrite existing crew.md')
@@ -397,22 +550,16 @@ program
     await cmdInit(options.dir, options.force ?? false)
   })
 
-program
-  .command('status')
+program.command('status')
   .description('Show the latest session status')
   .option('-d, --dir <path>', 'Project directory', process.cwd())
-  .action(async (options: { dir: string }) => {
-    await cmdStatus(options.dir)
-  })
+  .action(async (options: { dir: string }) => await cmdStatus(options.dir))
 
-program
-  .command('history')
+program.command('history')
   .description('Show past sessions')
   .option('-d, --dir <path>', 'Project directory', process.cwd())
   .option('--limit <n>', 'Number of sessions to show', '10')
-  .action(async (options: { dir: string; limit: string }) => {
-    await cmdHistory(options.dir, parseInt(options.limit, 10))
-  })
+  .action(async (options: { dir: string; limit: string }) => await cmdHistory(options.dir, parseInt(options.limit, 10)))
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
