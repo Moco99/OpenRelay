@@ -28,9 +28,11 @@ export function Dashboard({ bus, sessionId, agents, startedAt, workingDir = proc
   return (
     <Box flexDirection="column">
       <Header agents={agents} workingDir={workingDir} />
-      <Box flexGrow={1}>
+      <Box flexDirection="row">
         <AgentPanel agents={agents} states={agentStates} />
         <PlanPanel bus={bus} sessionId={sessionId} messages={messages} />
+      </Box>
+      <Box flexGrow={1}>
         <ActivityFeed messages={messages} workingDir={workingDir} />
       </Box>
       {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}

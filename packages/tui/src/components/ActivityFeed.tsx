@@ -1,6 +1,6 @@
 import React from 'react'
 import { Box, Text } from 'ink'
-import { resolve } from 'path'
+import { resolve, relative } from 'path'
 import type { Message } from '@openrelay/core'
 import { agentColor } from '../colors.js'
 import { formatTime } from '../format.js'
@@ -155,9 +155,14 @@ export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
           )}
           {activity.files && activity.files.length > 0 && (
             <Box marginLeft={24} flexDirection="column">
-              {activity.files.map((f, i) => (
-                <Text key={i} color="cyan" dimColor>· {f}</Text>
-              ))}
+              {activity.files.map((f, i) => {
+                const rel = relative(workingDir, f) || f
+                // OSC 8 hyperlink: \x1b]8;;URL\x07visible\x1b]8;;\x07
+                const link = `\x1b]8;;file://${f}\x07${rel}\x1b]8;;\x07`
+                return (
+                  <Text key={i} color="cyan"> · {link}</Text>
+                )
+              })}
             </Box>
           )}
         </Box>

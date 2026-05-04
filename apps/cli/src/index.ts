@@ -2,7 +2,7 @@
 import { Command } from 'commander'
 import { join } from 'path'
 import { existsSync, writeFileSync } from 'fs'
-import { createInterface, emitKeypressEvents, type Interface } from 'readline'
+import { emitKeypressEvents } from 'readline'
 import { createElement } from 'react'
 import { render } from 'ink'
 import { loadConfig, ConfigError } from '@openrelay/config'
@@ -16,6 +16,15 @@ import { Dashboard } from '@openrelay/tui'
 const L  = '\x1b[95m'  // lila (bright magenta)
 const DM = '\x1b[2m'   // dim
 const RS = '\x1b[0m'   // reset
+
+// ─── Shared Types ─────────────────────────────────────────────────────────────
+
+/** Minimal interface for pausing/resuming stdin — works with both readline and raw mode */
+interface ReplHandle {
+  pause(): void
+  resume(): void
+  close(): void
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -283,7 +292,7 @@ async function cmdInit(dir: string, force: boolean) {
   console.log('  Run /config to configure your agents.')
 }
 
-async function cmdConfig(dir: string, rl: Interface) {
+async function cmdConfig(dir: string, rl: ReplHandle) {
   const detected = detectClis()
   if (detected.length === 0) {
     console.log('[openrelay] No CLI agents detected. Install at least one to continue.')
@@ -353,7 +362,7 @@ async function cmdHistory(dir: string, limit: number) {
   bus.close()
 }
 
-async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface) {
+async function cmdRun(task: string, dir: string, dryRun = false, rl?: ReplHandle) {
   let config
   try {
     config = loadConfig(dir)
@@ -384,12 +393,17 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
     createElement(Dashboard, { bus, sessionId, agents: config.agents, startedAt: Date.now(), workingDir: dir })
   )
 
+  let cancelled = false
   const sigintHandler = () => {
+    cancelled = true
     bus.updateSession(sessionId, { status: 'cancelled', endedAt: Date.now() })
     rl?.resume()
+    // Keep stdin alive so the event loop doesn't exit
+    process.stdin.ref()
     unmount()
     bus.close()
-    process.exit(0)
+    if (!rl) process.exit(0) // non-interactive mode: exit
+    // interactive mode: fall through — the finally block shows the prompt
   }
   process.on('SIGINT', sigintHandler)
 
@@ -401,6 +415,8 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
     process.off('SIGINT', sigintHandler)
     // Resume readline BEFORE unmounting — keeps the event loop alive so Node doesn't exit
     rl?.resume()
+    // Keep stdin ref'd so the event loop doesn't exit after Ink unmount
+    process.stdin.ref()
     unmount()
 
     if (completed) {
@@ -411,6 +427,10 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
       const total  = states.reduce((s, a) => s + a.tokensIn + a.tokensOut, 0)
       console.log()
       console.log(`  ${L}✓${RS} Complete — ${done}/${tasks.length} tasks${failed ? `  ${L}✗${RS} ${failed} failed` : ''}   ${total.toLocaleString()} tokens`)
+      console.log()
+    } else if (cancelled) {
+      console.log()
+      console.log(`  ${DM}Session cancelled.${RS}`)
       console.log()
     }
 
@@ -427,7 +447,7 @@ function printHelp() {
 
 // ─── Interactive REPL ─────────────────────────────────────────────────────────
 
-async function handleCommand(cmd: string, args: string[], dir: string, rl: Interface) {
+async function handleCommand(cmd: string, args: string[], dir: string, rl: ReplHandle) {
   switch (cmd) {
     case 'init':    await cmdInit(dir, args.includes('--force')); break
     case 'config':  await cmdConfig(dir, rl); break
@@ -453,97 +473,369 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: Inter
 async function startInteractiveMode(dir = process.cwd()) {
   printBanner(dir)
 
-  const completer = (line: string): [string[], string] => {
-    const cmds = REPL_COMMANDS.map(r => r.cmd)
-    const hits  = cmds.filter(c => c.startsWith(line))
-    return [hits.length ? hits : cmds, line]
-  }
+  // ── ANSI helpers ──────────────────────────────────────────────────────────────
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: `${L}>${RS} `, completer })
+  const BG  = '\x1b[48;5;236m' // dark gray background
+  const FG  = '\x1b[38;5;252m' // light foreground on dark bg
+  const PHD = '\x1b[38;5;243m' // placeholder dim color
+  const CLR = '\x1b[2K'        // clear line
 
   let busy = false
-  let dropdownLines = 0
+  let lines: string[] = ['']    // multi-line buffer
+  let cursorLine = 0            // which line the cursor is on
+  let cursorCol  = 0            // column within that line
+  let dropdownEntries: typeof REPL_COMMANDS = []
 
-  // ── Prompt ────────────────────────────────────────────────────────────────────
+  // Track screen state for proper cursor math
+  let prevContentLines = 1      // how many content lines the PREVIOUS render had
+  let screenCursorLine = 0      // which content line the screen cursor is on (after last render)
 
-  function showPromptFull() {
-    const cols = process.stdout.columns || 80
-    process.stdout.write(`\n${DM}${'─'.repeat(cols)}${RS}\n`)
-    rl.prompt()
+  // ── Drawing ───────────────────────────────────────────────────────────────────
+
+  const cols = () => process.stdout.columns || 80
+
+  /** Render content for a single box line */
+  function renderBoxLine(i: number, inner: number) {
+    const lineText = lines[i]!
+    const isFirstLine = i === 0
+    const prefix = isFirstLine ? `${L}>${RS} ` : '  '
+    const prefixLen = 2
+
+    let content: string
+    if (lines.length === 1 && lineText === '') {
+      content = `${prefix}${PHD}Type your message or @path/to/file${RS}`
+    } else {
+      content = `${prefix}${FG}${lineText}${RS}`
+    }
+
+    const visibleLen = prefixLen + (lines.length === 1 && lineText === '' ? 34 : lineText.length)
+    const pad = Math.max(0, inner - visibleLen)
+    process.stdout.write(`${CLR}${DM}│${RS}${BG}${content}${' '.repeat(pad)}${RS}${DM}│${RS}\n`)
   }
 
-  // ── Live autocomplete dropdown ───────────────────────────────────────────────
+  /** Position the terminal cursor inside the box at (cursorLine, cursorCol) */
+  function positionCursor() {
+    // After drawing, cursor is one line below the bottom border
+    // Move up: 1 (bottom border) + (lines.length - cursorLine) content lines below cursor
+    const upCount = 1 + (lines.length - 1 - cursorLine)
+    if (upCount > 0) process.stdout.write(`\x1b[${upCount}A`)
+    const curX = 1 + 2 + cursorCol + 1 // │ + prefix(2) + cursorCol, 1-based
+    process.stdout.write(`\r\x1b[${curX}C`)
+    screenCursorLine = cursorLine
+  }
 
-  function clearDropdown() {
-    if (dropdownLines === 0) return
-    // cursor is at prompt row — save, clear each dropdown row below, restore
+  /** Draw the input box from scratch (cursor is NOT inside a previous box) */
+  function initialDraw() {
+    const w = cols()
+    const inner = w - 2
+
+    process.stdout.write(`\n${DM}╭${'─'.repeat(inner)}╮${RS}\n`)
+    for (let i = 0; i < lines.length; i++) renderBoxLine(i, inner)
+    process.stdout.write(`${DM}╰${'─'.repeat(inner)}╯${RS}\n`)
+
+    prevContentLines = lines.length
+    positionCursor()
+  }
+
+  /** Redraw the input box (cursor IS inside the previous box at screenCursorLine) */
+  function drawInputBox() {
+    const w = cols()
+    const inner = w - 2
+    const oldTotalRows = prevContentLines + 2  // top + old content + bottom
+    const newTotalRows = lines.length + 2
+
+    // Step 1: Move from screen cursor to top of the OLD box
+    // Screen cursor is at content row `screenCursorLine`, which is row (1 + screenCursorLine) from top
+    const upToTop = 1 + screenCursorLine
+    process.stdout.write(`\x1b[${upToTop}A\r`)
+
+    // Step 2: Clear old box rows
+    for (let i = 0; i < oldTotalRows; i++) {
+      process.stdout.write(`${CLR}`)
+      if (i < oldTotalRows - 1) process.stdout.write('\n')
+    }
+    // Cursor is now at oldTotalRows - 1 rows below top
+
+    // Step 3: If new box is taller, add extra blank lines
+    for (let i = oldTotalRows; i < newTotalRows; i++) {
+      process.stdout.write('\n')
+    }
+    // Cursor is now at max(old, new) - 1 rows below top
+
+    // Step 4: Move back to top
+    const maxRows = Math.max(oldTotalRows, newTotalRows)
+    if (maxRows > 1) process.stdout.write(`\x1b[${maxRows - 1}A`)
+    process.stdout.write('\r')
+
+    // Step 5: Draw new box
+    process.stdout.write(`${DM}╭${'─'.repeat(inner)}╮${RS}\n`)
+    for (let i = 0; i < lines.length; i++) renderBoxLine(i, inner)
+    process.stdout.write(`${DM}╰${'─'.repeat(inner)}╯${RS}\n`)
+
+    // Step 6: Position cursor and update tracking state
+    prevContentLines = lines.length
+    positionCursor()
+  }
+
+  function showDropdownStyled() {
+    const text = lines[0] ?? ''
+    if (!text.startsWith('/')) { dropdownEntries = []; return }
+    const matches = REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text)
+    dropdownEntries = matches.slice(0, 6)
+    if (dropdownEntries.length === 0) return
+
+    // Save cursor, move above the input box to draw dropdown
     process.stdout.write('\x1b[s')
-    for (let i = 1; i <= dropdownLines; i++) {
-      process.stdout.write(`\x1b[u\x1b[${i}B\x1b[2K`)
+    // Move up from cursor position to above the top border
+    const upFromCursor = screenCursorLine + 1 // +1 for top border
+    const dropdownHeight = dropdownEntries.length + 2 // +2 for dropdown borders
+    process.stdout.write(`\x1b[${upFromCursor + dropdownHeight}A`)
+
+    const w = cols()
+    const inner = w - 2
+
+    // Draw dropdown box
+    process.stdout.write(`\r${CLR}${DM}╭${'─'.repeat(inner)}╮${RS}\n`)
+    for (const { cmd, desc } of dropdownEntries) {
+      const entry = `  ${cmd}  ${desc}`
+      const pad = Math.max(0, inner - entry.length)
+      process.stdout.write(`${CLR}${DM}│${RS}${BG}  ${L}${cmd}${RS}${BG}  ${PHD}${desc}${RS}${BG}${' '.repeat(Math.max(0, inner - cmd.length - desc.length - 4))}${RS}${DM}│${RS}\n`)
+    }
+    process.stdout.write(`${CLR}${DM}╰${'─'.repeat(inner)}╯${RS}`)
+
+    // Restore cursor position
+    process.stdout.write('\x1b[u')
+  }
+
+  function clearDropdownArea() {
+    if (dropdownEntries.length === 0) return
+    process.stdout.write('\x1b[s')
+    const upFromCursor = screenCursorLine + 1
+    const dropdownHeight = dropdownEntries.length + 2
+    process.stdout.write(`\x1b[${upFromCursor + dropdownHeight}A`)
+    for (let i = 0; i < dropdownHeight; i++) {
+      process.stdout.write(`\r${CLR}\x1b[1B`)
     }
     process.stdout.write('\x1b[u')
-    dropdownLines = 0
+    dropdownEntries = []
   }
 
-  function showDropdown(line: string) {
-    clearDropdown()
-    if (!line.startsWith('/')) return
-    const matches = REPL_COMMANDS.filter(r => r.cmd.startsWith(line) && r.cmd !== line)
-    if (matches.length === 0) return
-    process.stdout.write('\x1b[s')
-    for (const { cmd, desc } of matches.slice(0, 6)) {
-      process.stdout.write(`\r\n\x1b[2K  ${L}${cmd}${RS}  ${DM}${desc}${RS}`)
-      dropdownLines++
-    }
-    process.stdout.write('\x1b[u')
+  function resetInput() {
+    clearDropdownArea()
+    lines = ['']
+    cursorLine = 0
+    cursorCol = 0
   }
 
-  // readline already enables keypress events on a TTY stdin internally
-  process.stdin.on('keypress', (_str, key) => {
-    if (busy) return
-    setImmediate(() => {
-      // Enter is handled by the 'line' event handler (cursor already moved to N+1)
-      if (key?.name === 'return' || key?.name === 'enter') return
-      const line = (rl as any).line ?? ''
-      showDropdown(line)
-    })
-  })
-
-  showPromptFull()
-
-  // ── Line handler ─────────────────────────────────────────────────────────────
-
-  rl.on('line', async (line) => {
-    // After readline's Enter echo, cursor is at N+1 (first dropdown row if active).
-    // clearDropdown() uses save/restore from N — wrong cursor here. Clear directly.
-    if (dropdownLines > 0) {
-      process.stdout.write('\x1b[2K')
-      for (let i = 1; i < dropdownLines; i++) process.stdout.write('\x1b[1B\x1b[2K')
-      if (dropdownLines > 1) process.stdout.write(`\x1b[${dropdownLines - 1}A`)
-      dropdownLines = 0
+  function fullRedraw() {
+    drawInputBox()
+    if (lines[0]?.startsWith('/')) {
+      showDropdownStyled()
     }
+  }
 
+  // ── Submission ────────────────────────────────────────────────────────────────
+
+  async function submitInput() {
     if (busy) return
-    const input = line.trim()
-    if (!input) { showPromptFull(); return }
+    const fullText = lines.join('\n').trim()
+    clearDropdownArea()
 
-    if (!input.startsWith('/')) {
-      console.log('[openrelay] Commands start with /. Type /help for a list.')
-      showPromptFull()
+    // Move cursor to after the input box for clean output
+    // Screen cursor is at content line screenCursorLine; bottom border is at (prevContentLines - screenCursorLine) below
+    const downFromCursor = (prevContentLines - screenCursorLine) + 1
+    if (downFromCursor > 0) process.stdout.write(`\x1b[${downFromCursor}B`)
+    process.stdout.write('\r\n')
+
+    if (!fullText) {
+      resetInput()
+      initialDraw()
       return
     }
 
-    const [cmd, ...args] = input.slice(1).split(/\s+/)
+    if (!fullText.startsWith('/')) {
+      console.log('[openrelay] Commands start with /. Type /help for a list.')
+      resetInput()
+      initialDraw()
+      return
+    }
+
+    const [cmd, ...args] = fullText.slice(1).split(/\s+/)
+    resetInput()
     busy = true
     try {
-      await handleCommand(cmd!, args, dir, rl)
+      await handleCommand(cmd!, args, dir, rlCompat)
     } finally {
       busy = false
-      showPromptFull()
+      initialDraw()
+    }
+  }
+
+  // ── Readline-compatible interface for cmdConfig/cmdRun ─────────────────────
+
+  // We need a minimal rl-like object for cmdRun and cmdConfig
+  let rawModeActive = true
+
+  const rlCompat = {
+    pause: () => {
+      if (process.stdin.isTTY && rawModeActive) {
+        process.stdin.setRawMode(false)
+        rawModeActive = false
+      }
+      process.stdin.pause()
+    },
+    resume: () => {
+      process.stdin.resume()
+      if (process.stdin.isTTY && !rawModeActive) {
+        process.stdin.setRawMode(true)
+        rawModeActive = true
+      }
+    },
+    close: () => { process.exit(0) },
+  } as ReplHandle
+
+  // ── Raw key handling ──────────────────────────────────────────────────────────
+
+  emitKeypressEvents(process.stdin)
+  if (process.stdin.isTTY) process.stdin.setRawMode(true)
+  process.stdin.resume()
+
+  process.stdin.on('keypress', (str: string | undefined, key: { name: string; ctrl: boolean; shift: boolean; meta: boolean; sequence: string }) => {
+    if (!key) return
+    if (busy) return
+
+    // Ctrl+C — exit
+    if (key.ctrl && key.name === 'c') {
+      console.log()
+      process.exit(0)
+    }
+
+    // Ctrl+D — exit
+    if (key.ctrl && key.name === 'd') {
+      console.log()
+      process.exit(0)
+    }
+
+    // Enter — submit (unless Shift+Enter for newline)
+    if (key.name === 'return') {
+      if (key.shift) {
+        // Shift+Enter: insert new line
+        const currentLine = lines[cursorLine]!
+        const before = currentLine.slice(0, cursorCol)
+        const after  = currentLine.slice(cursorCol)
+        lines[cursorLine] = before
+        lines.splice(cursorLine + 1, 0, after)
+        cursorLine++
+        cursorCol = 0
+        drawInputBox()
+        if (lines[0]?.startsWith('/')) showDropdownStyled()
+        return
+      }
+      submitInput()
+      return
+    }
+
+    // Backspace
+    if (key.name === 'backspace') {
+      // Nothing to delete when already empty
+      if (cursorCol === 0 && cursorLine === 0) return
+      if (cursorCol > 0) {
+        const line = lines[cursorLine]!
+        lines[cursorLine] = line.slice(0, cursorCol - 1) + line.slice(cursorCol)
+        cursorCol--
+      } else if (cursorLine > 0) {
+        // Merge with previous line
+        const prevLine = lines[cursorLine - 1]!
+        cursorCol = prevLine.length
+        lines[cursorLine - 1] = prevLine + lines[cursorLine]!
+        lines.splice(cursorLine, 1)
+        cursorLine--
+      }
+      fullRedraw()
+      return
+    }
+
+    // Delete key
+    if (key.name === 'delete') {
+      const line = lines[cursorLine]!
+      if (cursorCol < line.length) {
+        lines[cursorLine] = line.slice(0, cursorCol) + line.slice(cursorCol + 1)
+      } else if (cursorLine < lines.length - 1) {
+        lines[cursorLine] = line + lines[cursorLine + 1]!
+        lines.splice(cursorLine + 1, 1)
+      }
+      fullRedraw()
+      return
+    }
+
+    // Arrow keys
+    if (key.name === 'left') {
+      if (cursorCol > 0) cursorCol--
+      else if (cursorLine > 0) { cursorLine--; cursorCol = lines[cursorLine]!.length }
+      drawInputBox()
+      return
+    }
+    if (key.name === 'right') {
+      if (cursorCol < lines[cursorLine]!.length) cursorCol++
+      else if (cursorLine < lines.length - 1) { cursorLine++; cursorCol = 0 }
+      drawInputBox()
+      return
+    }
+    if (key.name === 'up') {
+      if (cursorLine > 0) {
+        cursorLine--
+        cursorCol = Math.min(cursorCol, lines[cursorLine]!.length)
+      }
+      drawInputBox()
+      return
+    }
+    if (key.name === 'down') {
+      if (cursorLine < lines.length - 1) {
+        cursorLine++
+        cursorCol = Math.min(cursorCol, lines[cursorLine]!.length)
+      }
+      drawInputBox()
+      return
+    }
+
+    // Home / End
+    if (key.name === 'home') { cursorCol = 0; drawInputBox(); return }
+    if (key.name === 'end') { cursorCol = lines[cursorLine]!.length; drawInputBox(); return }
+
+    // Tab — autocomplete
+    if (key.name === 'tab') {
+      const text = lines[0] ?? ''
+      if (text.startsWith('/') && lines.length === 1) {
+        const matches = REPL_COMMANDS.filter(r => r.cmd.startsWith(text))
+        if (matches.length === 1) {
+          lines[0] = matches[0]!.cmd + ' '
+          cursorCol = lines[0].length
+          clearDropdownArea()
+          fullRedraw()
+        }
+      }
+      return
+    }
+
+    // Escape — clear input
+    if (key.name === 'escape') {
+      resetInput()
+      initialDraw()
+      return
+    }
+
+    // Regular character input
+    if (str && !key.ctrl && !key.meta && str.length > 0 && str.charCodeAt(0) >= 32) {
+      const line = lines[cursorLine]!
+      lines[cursorLine] = line.slice(0, cursorCol) + str + line.slice(cursorCol)
+      cursorCol += str.length
+      fullRedraw()
+      return
     }
   })
 
-  rl.on('close', () => process.exit(0))
+  // Initial draw
+  initialDraw()
 }
 
 // ─── Commander (non-interactive) ──────────────────────────────────────────────

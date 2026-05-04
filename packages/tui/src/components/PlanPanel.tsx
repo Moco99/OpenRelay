@@ -39,7 +39,7 @@ export function PlanPanel({ bus, sessionId, messages }: Props) {
   const taskMap = new Map(busTasks.map(t => [t.id, t.status]))
 
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1} minWidth={32}>
+    <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1} flexGrow={1}>
       <Text bold>Plan</Text>
       {planTasks.map((t) => {
         const status = taskMap.get(t.id) ?? 'pending'
