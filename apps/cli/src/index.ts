@@ -192,7 +192,7 @@ async function cmdHistory(dir: string, limit: number) {
   bus.close()
 }
 
-async function cmdRun(task: string, dir: string, dryRun = false) {
+async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface) {
   let config
   try {
     config = loadConfig(dir)
@@ -227,6 +227,9 @@ async function cmdRun(task: string, dir: string, dryRun = false) {
   const manager = new SessionManager(bus, config, plannerAdapter)
   const sessionId = manager.getSessionId()
 
+  // Pause readline so Ink can take full control of the terminal
+  rl?.pause()
+
   const { unmount } = render(
     createElement(Dashboard, {
       bus,
@@ -240,6 +243,7 @@ async function cmdRun(task: string, dir: string, dryRun = false) {
     bus.updateSession(sessionId, { status: 'cancelled', endedAt: Date.now() })
     unmount()
     bus.close()
+    rl?.resume()
     process.exit(0)
   })
 
@@ -248,6 +252,7 @@ async function cmdRun(task: string, dir: string, dryRun = false) {
   } finally {
     unmount()
     bus.close()
+    rl?.resume()
   }
 }
 
@@ -278,7 +283,7 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: Inter
     case 'run': {
       const task = args.join(' ')
       if (!task) { console.log('[openrelay] Usage: /run <task>'); break }
-      await cmdRun(task, dir)
+      await cmdRun(task, dir, false, rl)
       break
     }
     case 'help':  printHelp(); break

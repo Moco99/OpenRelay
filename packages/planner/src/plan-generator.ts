@@ -28,8 +28,10 @@ export class PlanGenerator {
     }
 
     for (const t of tasks) {
+      const busId = randomUUID()
+      t.id = busId  // keep plan task ID in sync with bus ID
       this.bus.createTask({
-        id: t.id,
+        id: busId,
         sessionId: this.sessionId,
         planId: plan.id,
         title: t.title,

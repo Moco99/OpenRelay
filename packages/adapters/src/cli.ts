@@ -4,9 +4,9 @@ import type { IAgentAdapter, AgentChunk, ContextMessage, SendOptions, TokenUsage
 
 // Per-CLI invocation strategies for one-shot prompt mode
 const CLI_ARGS: Record<string, (prompt: string, model: string) => string[]> = {
-  claude:   (p, m) => ['--output-format', 'stream-json', '--model', m, '-p', p],
+  claude:   (p, m) => ['--output-format', 'stream-json', '--verbose', '--model', m, '-p', p],
   opencode: (p, m) => ['run', '--message', p, '--model', m, '--output-format', 'stream-json'],
-  gemini:   (p, m) => ['--model', m, '--prompt', p, '--yolo'],
+  gemini:   (p, m) => ['--model', m, '--prompt', p, '--yolo', '--skip-trust'],
   codex:    (p, _) => [p],
 }
 const DEFAULT_ARGS = (p: string, _m: string): string[] => ['-p', p]
@@ -29,21 +29,76 @@ export class CliAdapter implements IAgentAdapter {
       env: { ...process.env, ...this.config.env },
       timeout,
       reject: false,
-      lines: true,
     })
 
-    let outputBuffer = ''
+    let textBuffer = ''
 
     if (proc.stdout) {
-      for await (const line of proc.stdout) {
-        const str = String(line)
-        const parsed = this.tryParseStreamJson(str)
-        if (parsed) {
-          yield parsed
-          continue
+      let partial = ''
+      for await (const chunk of proc.stdout) {
+        partial += String(chunk)
+        const lines = partial.split('\n')
+        partial = lines.pop() ?? ''  // last element may be an incomplete line
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) continue
+
+          try {
+            const obj = JSON.parse(trimmed) as Record<string, unknown>
+
+            // Streaming text chunk (Claude Code non-verbose)
+            if (obj['type'] === 'text' && typeof obj['text'] === 'string') {
+              textBuffer += obj['text']
+              yield { type: 'text', content: obj['text'] }
+              continue
+            }
+
+            // Final result event — extract text (verbose mode) + usage
+            if (obj['type'] === 'result') {
+              const usage = obj['usage'] as { input_tokens?: number; output_tokens?: number } | undefined
+              if (usage) {
+                this.usage.input  = usage.input_tokens  ?? this.usage.input
+                this.usage.output = usage.output_tokens ?? this.usage.output
+              }
+              // Verbose mode: response text is in result.result, not in streaming text events
+              if (!textBuffer && typeof obj['result'] === 'string' && obj['result']) {
+                textBuffer = obj['result']
+                yield { type: 'text', content: obj['result'] }
+              }
+              yield { type: 'done', content: '' }
+              continue
+            }
+
+            // All other JSON events (system, assistant, user, tool_use…) → skip
+          } catch {
+            // Not JSON — plain text output (e.g. Gemini)
+            textBuffer += trimmed + '\n'
+            yield { type: 'text', content: trimmed }
+          }
         }
-        outputBuffer += str + '\n'
-        yield { type: 'text', content: str }
+      }
+
+      // Flush any remaining partial line
+      if (partial.trim()) {
+        try {
+          const obj = JSON.parse(partial.trim()) as Record<string, unknown>
+          if (obj['type'] === 'result') {
+            const usage = obj['usage'] as { input_tokens?: number; output_tokens?: number } | undefined
+            if (usage) {
+              this.usage.input  = usage.input_tokens  ?? this.usage.input
+              this.usage.output = usage.output_tokens ?? this.usage.output
+            }
+            if (!textBuffer && typeof obj['result'] === 'string' && obj['result']) {
+              textBuffer = obj['result']
+              yield { type: 'text', content: obj['result'] }
+            }
+            yield { type: 'done', content: '' }
+          }
+        } catch {
+          textBuffer += partial.trim() + '\n'
+          yield { type: 'text', content: partial.trim() }
+        }
       }
     }
 
@@ -52,7 +107,7 @@ export class CliAdapter implements IAgentAdapter {
     if (proc.exitCode !== 0 && proc.exitCode !== null) {
       yield { type: 'error', content: `CLI "${cliName}" exited with code ${proc.exitCode}` }
     } else {
-      this.usage.output += estimateTokens(outputBuffer)
+      this.usage.output += estimateTokens(textBuffer)
       yield { type: 'done', content: '' }
     }
   }
@@ -63,30 +118,6 @@ export class CliAdapter implements IAgentAdapter {
 
   async terminate(): Promise<void> {
     // execa manages subprocess cleanup on timeout/rejection
-  }
-
-  // Parses Claude Code / OpenCode stream-json events.
-  // Updates this.usage if a result event contains usage stats.
-  private tryParseStreamJson(line: string): AgentChunk | null {
-    try {
-      const obj = JSON.parse(line) as Record<string, unknown>
-
-      if (obj['type'] === 'text' && typeof obj['text'] === 'string') {
-        return { type: 'text', content: obj['text'] }
-      }
-
-      if (obj['type'] === 'result') {
-        const usage = obj['usage'] as { input_tokens?: number; output_tokens?: number } | undefined
-        if (usage) {
-          this.usage.input  = usage.input_tokens  ?? this.usage.input
-          this.usage.output = usage.output_tokens ?? this.usage.output
-        }
-        return { type: 'done', content: '' }
-      }
-    } catch {
-      // Not JSON — caller will handle as plain text
-    }
-    return null
   }
 }
 
