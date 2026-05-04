@@ -100,7 +100,7 @@ function printBanner(dir: string) {
     console.log(`  ${DM}No crew configured — run /config to set up agents.${RS}`)
   }
   console.log()
-  console.log(`  ${DM}Type / to see commands · Tab for autocomplete · /exit to quit${RS}`)
+  console.log(`  ${DM}Type / to see commands · /exit to quit${RS}`)
   console.log()
 }
 
@@ -127,6 +127,9 @@ async function runRawConfigWizard(
     emitKeypressEvents(process.stdin)
     if (process.stdin.isTTY) process.stdin.setRawMode(true)
     process.stdin.resume()
+
+    // Alternate screen buffer — wizard runs on a clean screen, normal buffer restored on exit
+    process.stdout.write('\x1b[?1049h')
 
     let focus = 0  // 0=plannerCli 1=plannerModel 2=executorCli 3=executorModel
     let plannerCli    = initial?.planner.cli   ?? detected[0] ?? ''
@@ -161,9 +164,9 @@ async function runRawConfigWizard(
 
     function draw() {
       const rows = process.stdout.rows ?? 24
-      const startRow = Math.max(1, rows - WIZARD_HEIGHT)
-      process.stdout.write('\x1b[2J')
-      process.stdout.write(`\x1b[${startRow}H`)
+      const startRow = Math.max(1, rows - WIZARD_HEIGHT - 1)
+      // In alt screen: clear entire buffer then position near bottom
+      process.stdout.write(`\x1b[2J\x1b[${startRow}H`)
       const out = [
         '',
         `  ${L}Configure Crew${RS}`,
@@ -189,6 +192,8 @@ async function runRawConfigWizard(
       if (process.stdin.isTTY) process.stdin.setRawMode(false)
       process.stdin.pause()
       for (const l of savedListeners) process.stdin.on('keypress', l as any)
+      // Exit alternate screen — normal buffer (with full scroll history) is restored
+      process.stdout.write('\x1b[?1049l')
     }
 
     function done(saved: boolean) {
@@ -296,19 +301,17 @@ async function cmdConfig(dir: string, rl: Interface) {
   rl.pause()
   const result = await runRawConfigWizard(detected, initial)
   rl.resume()
+  // Wizard set raw mode off; readline needs it on for interactive editing
+  if (process.stdin.isTTY) process.stdin.setRawMode(true)
 
-  process.stdout.write('\x1b[2J\x1b[H')
-
+  // Alt screen was exited — we're back in normal buffer with history intact
   if (!result) {
-    printBanner(dir)
-    console.log('[openrelay] Cancelled — crew.md unchanged.')
+    console.log(`  ${DM}└${RS} Config dialog dismissed.`)
     return
   }
 
   writeCrewMd(result.planner, result.executor, dir)
-  printBanner(dir)
-  console.log('[openrelay] crew.md updated.')
-  console.log()
+  console.log(`  ${DM}└${RS} Saved — ${L}planner${RS} ${result.planner.cli}/${result.planner.model}  ${L}executor${RS} ${result.executor.cli}/${result.executor.model}`)
 }
 
 async function cmdStatus(dir: string) {
@@ -455,18 +458,34 @@ async function startInteractiveMode(dir = process.cwd()) {
   }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout, prompt: `${L}>${RS} `, completer })
-  rl.prompt()
 
   let busy = false
   let dropdownLines = 0
+
+  // ── Prompt frame (separator above + below) ────────────────────────────────────
+
+  function sep() {
+    return `${DM}${'─'.repeat(process.stdout.columns || 80)}${RS}`
+  }
+
+  function drawLowerSep() {
+    // Save at prompt, go down 1, CR to col 0, clear row, write sep, restore
+    process.stdout.write(`\x1b[s\x1b[1B\r\x1b[2K${sep()}\x1b[u`)
+  }
+
+  function showPromptFull() {
+    process.stdout.write(sep() + '\n')
+    rl.prompt()
+    drawLowerSep()
+  }
 
   // ── Live autocomplete dropdown ───────────────────────────────────────────────
 
   function clearDropdown() {
     if (dropdownLines === 0) return
     process.stdout.write('\x1b[s')
-    for (let i = 0; i < dropdownLines; i++) {
-      process.stdout.write(`\x1b[${i + 1}B\x1b[2K`)
+    for (let i = 1; i <= dropdownLines; i++) {
+      process.stdout.write(`\x1b[u\x1b[${i}B\x1b[2K`)
     }
     process.stdout.write('\x1b[u')
     dropdownLines = 0
@@ -474,15 +493,20 @@ async function startInteractiveMode(dir = process.cwd()) {
 
   function showDropdown(line: string) {
     clearDropdown()
-    if (!line.startsWith('/')) return
-
-    const matches = REPL_COMMANDS
-      .filter(r => r.cmd.startsWith(line) && r.cmd !== line)
-    if (matches.length === 0) return
-
+    if (!line.startsWith('/')) {
+      drawLowerSep()
+      return
+    }
+    const matches = REPL_COMMANDS.filter(r => r.cmd.startsWith(line) && r.cmd !== line)
+    if (matches.length === 0) {
+      drawLowerSep()
+      return
+    }
+    // Dropdown starts at row below cursor (same row as lower sep — overwrites it)
     process.stdout.write('\x1b[s')
-    for (const { cmd, desc } of matches.slice(0, 8)) {
-      process.stdout.write(`\n\x1b[2K  ${L}${cmd}${RS}  ${DM}${desc}${RS}`)
+    for (const { cmd, desc } of matches.slice(0, 6)) {
+      // \r\n → col 0 of next row (not just \n which keeps same column)
+      process.stdout.write(`\r\n\x1b[2K  ${L}${cmd}${RS}  ${DM}${desc}${RS}`)
       dropdownLines++
     }
     process.stdout.write('\x1b[u')
@@ -492,26 +516,33 @@ async function startInteractiveMode(dir = process.cwd()) {
   process.stdin.on('keypress', (_str, key) => {
     if (busy) return
     setImmediate(() => {
-      if (key?.name === 'return' || key?.name === 'enter') {
-        clearDropdown()
-        return
-      }
+      // Enter is handled by the 'line' event handler (cursor already moved to N+1)
+      if (key?.name === 'return' || key?.name === 'enter') return
       const line = (rl as any).line ?? ''
       showDropdown(line)
     })
   })
 
+  showPromptFull()
+
   // ── Line handler ─────────────────────────────────────────────────────────────
 
   rl.on('line', async (line) => {
-    clearDropdown()
+    // After readline's Enter echo, cursor is at N+1 (lower sep / first dropdown row).
+    // clearDropdown() uses save/restore from N — wrong here. Clear directly instead.
+    const rowsToClear = Math.max(1, dropdownLines)
+    process.stdout.write('\x1b[2K')  // clear lower-sep row (N+1)
+    for (let i = 1; i < rowsToClear; i++) process.stdout.write('\x1b[1B\x1b[2K')
+    if (rowsToClear > 1) process.stdout.write(`\x1b[${rowsToClear - 1}A`)
+    dropdownLines = 0
+
     if (busy) return
     const input = line.trim()
-    if (!input) { rl.prompt(); return }
+    if (!input) { showPromptFull(); return }
 
     if (!input.startsWith('/')) {
       console.log('[openrelay] Commands start with /. Type /help for a list.')
-      rl.prompt()
+      showPromptFull()
       return
     }
 
@@ -521,7 +552,7 @@ async function startInteractiveMode(dir = process.cwd()) {
       await handleCommand(cmd!, args, dir, rl)
     } finally {
       busy = false
-      rl.prompt()
+      showPromptFull()
     }
   })
 
