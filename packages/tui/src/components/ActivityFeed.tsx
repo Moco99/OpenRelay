@@ -18,24 +18,20 @@ interface Activity {
   color?: string
 }
 
-// Matches absolute or relative paths with a file extension
+// Matches absolute or relative paths that look like file paths with extensions
 const FILE_PATH_RE = /(?:^|\s|`|"|')([./~][\w./\\-]*\.[\w]{1,10})/gm
 
-function extractFilePaths(text: string): string[] {
+function extractFilePaths(text: string, workingDir: string): string[] {
   const paths: string[] = []
   let m: RegExpExecArray | null
   FILE_PATH_RE.lastIndex = 0
   while ((m = FILE_PATH_RE.exec(text)) !== null) {
     const p = m[1]
-    if (p && !paths.includes(p)) paths.push(p)
+    if (!p) continue
+    const abs = p.startsWith('/') ? p : resolve(workingDir, p)
+    if (!paths.includes(abs)) paths.push(abs)
   }
-  return paths.slice(0, 8)
-}
-
-function fileLink(filePath: string, workingDir: string): string {
-  const abs = filePath.startsWith('/') ? filePath : resolve(workingDir, filePath)
-  // OSC 8 hyperlink: \x1b]8;;URL\x1b\\ text \x1b]8;;\x1b\\
-  return `\x1b]8;;file://${abs}\x1b\\${filePath}\x1b]8;;\x1b\\`
+  return paths.slice(0, 6)
 }
 
 function toActivity(msg: Message, workingDir: string): Activity | null {
@@ -78,12 +74,12 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       }
 
       const rest = lines.slice(1).join('\n').trim()
-      const files = extractFilePaths(output)
+      const files = extractFilePaths(output, workingDir)
       return {
         agent: msg.fromAgent,
         line: `Done${firstLine ? ` — ${firstLine}` : ''}`,
         ...(rest ? { detail: rest.slice(0, 600) } : {}),
-        ...(files.length > 0 ? { files: files.map(f => fileLink(f, workingDir)) } : {}),
+        ...(files.length > 0 ? { files } : {}),
       }
     }
 
@@ -152,7 +148,7 @@ export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
           </Box>
           {activity.detail && (
             <Box marginLeft={24} flexDirection="column">
-              {activity.detail.split('\n').slice(0, 10).map((l, i) => (
+              {activity.detail.split('\n').slice(0, 8).map((l, i) => (
                 <Text key={i} color="gray">{l}</Text>
               ))}
             </Box>
@@ -160,7 +156,7 @@ export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
           {activity.files && activity.files.length > 0 && (
             <Box marginLeft={24} flexDirection="column">
               {activity.files.map((f, i) => (
-                <Text key={i} color="cyan">{f}</Text>
+                <Text key={i} color="cyan" dimColor>· {f}</Text>
               ))}
             </Box>
           )}

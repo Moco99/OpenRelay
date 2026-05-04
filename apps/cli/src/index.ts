@@ -30,7 +30,7 @@ const AVAILABLE_MODELS: Record<string, { planner: string[]; coder: string[] }> =
   },
   gemini: {
     planner: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-    coder:   ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    coder:   ['gemini-2.5-flash', 'gemini-2.5-pro'],
   },
   codex: {
     planner: ['o3', 'o4-mini'],
@@ -386,9 +386,9 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
 
   const sigintHandler = () => {
     bus.updateSession(sessionId, { status: 'cancelled', endedAt: Date.now() })
+    rl?.resume()
     unmount()
     bus.close()
-    rl?.resume()
     process.exit(0)
   }
   process.on('SIGINT', sigintHandler)
@@ -399,6 +399,8 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
     completed = true
   } finally {
     process.off('SIGINT', sigintHandler)
+    // Resume readline BEFORE unmounting — keeps the event loop alive so Node doesn't exit
+    rl?.resume()
     unmount()
 
     if (completed) {
@@ -413,7 +415,6 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
     }
 
     bus.close()
-    rl?.resume()
   }
 }
 
