@@ -117,6 +117,13 @@ export class MessageBus {
     return row ? rowToSession(row) : null
   }
 
+  getSessions(limit = 10): Session[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?',
+    ).all(limit) as RawSession[]
+    return rows.map(rowToSession)
+  }
+
   updateSession(id: string, updates: Partial<Pick<Session, 'status' | 'endedAt' | 'summary'>>): void {
     const fields: string[] = []
     const values: SQLValue[] = []
