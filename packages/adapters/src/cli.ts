@@ -6,7 +6,7 @@ import type { IAgentAdapter, AgentChunk, ContextMessage, SendOptions, TokenUsage
 const CLI_ARGS: Record<string, (prompt: string, model: string) => string[]> = {
   claude:   (p, m) => ['--output-format', 'stream-json', '--model', m, '-p', p],
   opencode: (p, m) => ['run', '--message', p, '--model', m, '--output-format', 'stream-json'],
-  gemini:   (p, m) => ['--model', m, '--prompt', p],
+  gemini:   (p, m) => ['--model', m, '--prompt', p, '--yolo'],
   codex:    (p, _) => [p],
 }
 const DEFAULT_ARGS = (p: string, _m: string): string[] => ['-p', p]

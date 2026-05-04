@@ -49,11 +49,12 @@ function ask(rl: Interface, question: string): Promise<string> {
   return new Promise(resolve => rl.question(question, resolve))
 }
 
-async function askChoice(rl: Interface, question: string, choices: string[]): Promise<string> {
+async function askChoice(rl: Interface, question: string, choices: string[]): Promise<string | null> {
   while (true) {
     const answer = (await ask(rl, question)).trim()
+    if (answer === '' || answer === 'q') return null
     if (choices.includes(answer)) return answer
-    console.log(`    Must be one of: ${choices.join(', ')}`)
+    console.log(`    Must be one of: ${choices.join(', ')} (or press Enter to cancel)`)
   }
 }
 
@@ -121,10 +122,12 @@ async function cmdConfig(dir: string, rl: Interface) {
   console.log('  A planner uses the strongest model; an executor uses an intermediate one.\n')
 
   const plannerCli = await askChoice(rl, `  Planner CLI [${detected.join('/')}]: `, detected)
+  if (!plannerCli) { console.log('[openrelay] Cancelled.'); return }
   const plannerModel = DEFAULT_MODELS[plannerCli]!.planner
   console.log(`    → ${plannerModel}`)
 
   const coderCli = await askChoice(rl, `  Executor CLI [${detected.join('/')}]: `, detected)
+  if (!coderCli) { console.log('[openrelay] Cancelled.'); return }
   const coderModel = DEFAULT_MODELS[coderCli]!.coder
   console.log(`    → ${coderModel}`)
 
