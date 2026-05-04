@@ -362,13 +362,14 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: Interface)
     throw e
   }
 
-  console.log(`[openrelay] Task: ${task}`)
-  for (const a of config.agents) {
-    const backend = a.mode === 'api' ? `${a.provider}/${a.model}` : `${a.cli} (${a.model})`
-    console.log(`  · ${a.id.padEnd(14)} ${a.role.padEnd(8)} ${backend}`)
+  if (dryRun) {
+    console.log(`[openrelay] Dry run — ${task}`)
+    for (const a of config.agents) {
+      const b = a.mode === 'api' ? `${a.provider}/${a.model}` : `${a.cli}/${a.model}`
+      console.log(`  ${a.id.padEnd(14)} ${a.role.padEnd(8)} ${b}`)
+    }
+    return
   }
-
-  if (dryRun) { console.log('[openrelay] Dry run — stopping before execution'); return }
 
   const plannerConfig = config.agents.find(a => a.role === 'planner')
   if (!plannerConfig) { console.error('[openrelay] No planner agent in crew.md'); process.exit(1) }
@@ -462,27 +463,19 @@ async function startInteractiveMode(dir = process.cwd()) {
   let busy = false
   let dropdownLines = 0
 
-  // ── Prompt frame (separator above + below) ────────────────────────────────────
-
-  function sep() {
-    return `${DM}${'─'.repeat(process.stdout.columns || 80)}${RS}`
-  }
-
-  function drawLowerSep() {
-    // Save at prompt, go down 1, CR to col 0, clear row, write sep, restore
-    process.stdout.write(`\x1b[s\x1b[1B\r\x1b[2K${sep()}\x1b[u`)
-  }
+  // ── Prompt ────────────────────────────────────────────────────────────────────
 
   function showPromptFull() {
-    process.stdout.write(sep() + '\n')
+    const cols = process.stdout.columns || 80
+    process.stdout.write(`\n${DM}${'─'.repeat(cols)}${RS}\n`)
     rl.prompt()
-    drawLowerSep()
   }
 
   // ── Live autocomplete dropdown ───────────────────────────────────────────────
 
   function clearDropdown() {
     if (dropdownLines === 0) return
+    // cursor is at prompt row — save, clear each dropdown row below, restore
     process.stdout.write('\x1b[s')
     for (let i = 1; i <= dropdownLines; i++) {
       process.stdout.write(`\x1b[u\x1b[${i}B\x1b[2K`)
@@ -493,19 +486,11 @@ async function startInteractiveMode(dir = process.cwd()) {
 
   function showDropdown(line: string) {
     clearDropdown()
-    if (!line.startsWith('/')) {
-      drawLowerSep()
-      return
-    }
+    if (!line.startsWith('/')) return
     const matches = REPL_COMMANDS.filter(r => r.cmd.startsWith(line) && r.cmd !== line)
-    if (matches.length === 0) {
-      drawLowerSep()
-      return
-    }
-    // Dropdown starts at row below cursor (same row as lower sep — overwrites it)
+    if (matches.length === 0) return
     process.stdout.write('\x1b[s')
     for (const { cmd, desc } of matches.slice(0, 6)) {
-      // \r\n → col 0 of next row (not just \n which keeps same column)
       process.stdout.write(`\r\n\x1b[2K  ${L}${cmd}${RS}  ${DM}${desc}${RS}`)
       dropdownLines++
     }
@@ -528,13 +513,14 @@ async function startInteractiveMode(dir = process.cwd()) {
   // ── Line handler ─────────────────────────────────────────────────────────────
 
   rl.on('line', async (line) => {
-    // After readline's Enter echo, cursor is at N+1 (lower sep / first dropdown row).
-    // clearDropdown() uses save/restore from N — wrong here. Clear directly instead.
-    const rowsToClear = Math.max(1, dropdownLines)
-    process.stdout.write('\x1b[2K')  // clear lower-sep row (N+1)
-    for (let i = 1; i < rowsToClear; i++) process.stdout.write('\x1b[1B\x1b[2K')
-    if (rowsToClear > 1) process.stdout.write(`\x1b[${rowsToClear - 1}A`)
-    dropdownLines = 0
+    // After readline's Enter echo, cursor is at N+1 (first dropdown row if active).
+    // clearDropdown() uses save/restore from N — wrong cursor here. Clear directly.
+    if (dropdownLines > 0) {
+      process.stdout.write('\x1b[2K')
+      for (let i = 1; i < dropdownLines; i++) process.stdout.write('\x1b[1B\x1b[2K')
+      if (dropdownLines > 1) process.stdout.write(`\x1b[${dropdownLines - 1}A`)
+      dropdownLines = 0
+    }
 
     if (busy) return
     const input = line.trim()

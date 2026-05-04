@@ -1,5 +1,6 @@
 export { Dashboard }           from './components/Dashboard.js'
 export { Header }              from './components/Header.js'
+export { ActivityFeed }        from './components/ActivityFeed.js'
 export { AgentPanel }          from './components/AgentPanel.js'
 export { PlanPanel }           from './components/PlanPanel.js'
 export { ChatFeed }            from './components/ChatFeed.js'

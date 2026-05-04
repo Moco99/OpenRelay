@@ -1,11 +1,9 @@
 import React from 'react'
-import { Box, Text } from 'ink'
+import { Box } from 'ink'
 import type { AgentConfig, MessageBus } from '@openrelay/core'
 import { useBusMessages, useCheckpoint, useAgentStates } from '../hooks.js'
 import { Header } from './Header.js'
-import { AgentPanel } from './AgentPanel.js'
-import { PlanPanel } from './PlanPanel.js'
-import { ChatFeed } from './ChatFeed.js'
+import { ActivityFeed } from './ActivityFeed.js'
 import { CheckpointPrompt } from './CheckpointPrompt.js'
 import { StatusBar } from './StatusBar.js'
 
@@ -28,14 +26,8 @@ export function Dashboard({ bus, sessionId, agents, startedAt, workingDir = proc
   return (
     <Box flexDirection="column">
       <Header agents={agents} workingDir={workingDir} />
-      <Box flexGrow={1}>
-        <AgentPanel agents={agents} states={agentStates} />
-        <PlanPanel bus={bus} sessionId={sessionId} messages={messages} />
-        <Box flexDirection="column" flexGrow={1}>
-          <ChatFeed messages={messages} />
-          {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}
-        </Box>
-      </Box>
+      <ActivityFeed messages={messages} />
+      {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}
       <StatusBar
         sessionId={sessionId}
         startedAt={startedAt}
