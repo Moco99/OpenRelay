@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto'
 import type { MessageBus, AgentConfig } from '@openrelay/core'
 import type { IAgentAdapter } from '@openrelay/adapters'
-import { serializeWorkingMemory } from '@openrelay/adapters'
 import { PLAN_PROMPT } from './prompts.js'
+import { buildContext } from './context.js'
 import type { Plan, PlanTask } from './types.js'
 
 export class PlanGenerator {
@@ -14,12 +14,7 @@ export class PlanGenerator {
   ) {}
 
   async generate(task: string): Promise<Plan> {
-    const recentMessages = this.bus.getMessages(this.sessionId)
-    const activeTasks = this.bus.getTasks(this.sessionId)
-    const workingMemory = recentMessages.length > 0
-      ? serializeWorkingMemory(recentMessages, activeTasks)
-      : ''
-
+    const workingMemory = buildContext(this.bus, this.sessionId)
     const prompt = PLAN_PROMPT(task, workingMemory)
     const raw = await this.collectResponse(prompt)
     const tasks = this.parsePlanTasks(raw)

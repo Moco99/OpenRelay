@@ -7,6 +7,7 @@ import { DeviationDetector } from './deviation-detector.js'
 import { BudgetTracker } from './budget-tracker.js'
 import { TaskExecutor } from './task-executor.js'
 import { CheckpointGate } from './checkpoint-gate.js'
+import { SummaryGenerator } from './summary-generator.js'
 import type { PlanTask } from './types.js'
 
 interface SessionManagerOptions {
@@ -55,6 +56,9 @@ export class SessionManager {
       ?? (() => createAdapter(executorConfig))
     const taskExecutor = new TaskExecutor(
       adapterFactory, this.bus, this.sessionId, executorConfig.id, budgetTracker,
+    )
+    const summaryGenerator = new SummaryGenerator(
+      this.plannerAdapter, this.bus, plannerConfig, this.sessionId,
     )
 
     // 1. Generate plan
@@ -134,6 +138,15 @@ export class SessionManager {
           tokensIn: 0, tokensOut: 0,
         })
         await checkpointGate.waitForResponse(cpMsg.id)
+      }
+
+      // Periodic summarization: compress context if enough new messages have accumulated
+      const allMsgs = this.bus.getMessages(this.sessionId)
+      const lastSummary = this.bus.getLatestSummary(this.sessionId)
+      const coveredSeq = lastSummary?.coveredUpToSeq ?? 0
+      const newMsgCount = allMsgs.filter(m => m.seq > coveredSeq).length
+      if (newMsgCount >= this.config.session.summaryInterval) {
+        await summaryGenerator.summarize()
       }
     }
 

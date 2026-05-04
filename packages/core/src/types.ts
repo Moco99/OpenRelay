@@ -80,6 +80,7 @@ export interface SessionMemory {
   content: string
   createdAt: number
   tokens: number
+  coveredUpToSeq: number  // rowid of last message covered; 0 for non-summary entries
 }
 
 // ─── Project configuration (parsed from crew.md) 

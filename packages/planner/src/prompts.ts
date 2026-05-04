@@ -27,6 +27,18 @@ Rules:
 ${workingMemory ? `Context from this session:\n${workingMemory}\n` : ''}\
 Task to plan: ${task}`
 
+export const SUMMARY_PROMPT = (context: string): string => `\
+You are a session historian for a multi-agent software project.
+Summarize the following agent activity in 3-5 concise bullet points. Focus on:
+- What was accomplished
+- What decisions were made
+- What problems or deviations were found
+- Current state of the project
+
+Respond with plain text bullets only — no JSON, no markdown headers.
+
+${context}`
+
 export const DEVIATION_PROMPT = (
   title: string,
   successCriteria: string,

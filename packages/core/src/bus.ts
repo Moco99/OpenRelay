@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
-import type { Message, Task, Session, AgentState } from './types.js'
+import type { Message, Task, Session, AgentState, SessionMemory } from './types.js'
 
 type SQLValue = string | number | bigint | boolean | null | Uint8Array
 
@@ -59,12 +59,13 @@ const SCHEMA = `
   );
 
   CREATE TABLE IF NOT EXISTS session_memory (
-    id          TEXT PRIMARY KEY,
-    session_id  TEXT NOT NULL,
-    type        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    created_at  INTEGER NOT NULL,
-    tokens      INTEGER NOT NULL DEFAULT 0
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    type                TEXT NOT NULL,
+    content             TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    tokens              INTEGER NOT NULL DEFAULT 0,
+    covered_up_to_seq   INTEGER NOT NULL DEFAULT 0
   );
 `
 
@@ -194,12 +195,53 @@ export class MessageBus {
     return rows.map(rowToTask)
   }
 
+  addMemory(
+    sessionId: string,
+    type: SessionMemory['type'],
+    content: string,
+    tokens: number,
+    coveredUpToSeq = 0,
+  ): SessionMemory {
+    const id = randomUUID()
+    const now = Date.now()
+    this.db.prepare(`
+      INSERT INTO session_memory (id, session_id, type, content, created_at, tokens, covered_up_to_seq)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, sessionId, type, content, now, tokens, coveredUpToSeq)
+    return { id, sessionId, type, content, createdAt: now, tokens, coveredUpToSeq }
+  }
+
+  getMemories(sessionId: string, type?: SessionMemory['type']): SessionMemory[] {
+    const rows = type
+      ? this.db.prepare(
+          'SELECT * FROM session_memory WHERE session_id = ? AND type = ? ORDER BY created_at ASC',
+        ).all(sessionId, type) as RawMemory[]
+      : this.db.prepare(
+          'SELECT * FROM session_memory WHERE session_id = ? ORDER BY created_at ASC',
+        ).all(sessionId) as RawMemory[]
+    return rows.map(rowToMemory)
+  }
+
+  getLatestSummary(sessionId: string): SessionMemory | null {
+    const row = this.db.prepare(`
+      SELECT * FROM session_memory
+      WHERE session_id = ? AND type = 'summary'
+      ORDER BY rowid DESC LIMIT 1
+    `).get(sessionId) as RawMemory | null
+    return row ? rowToMemory(row) : null
+  }
+
   close(): void {
     this.db.close()
   }
 }
 
 // ─── Row mappers ──────────────────────────────────────────────────────────────
+
+interface RawMemory {
+  id: string; session_id: string; type: string; content: string
+  created_at: number; tokens: number; covered_up_to_seq: number
+}
 
 interface RawMessage {
   id: string; seq: number; session_id: string; from_agent: string; to_agent: string
@@ -231,4 +273,7 @@ function rowToAgentState(r: RawAgentState): AgentState {
 }
 function rowToTask(r: RawTask): Task {
   return { id: r.id, sessionId: r.session_id, planId: r.plan_id, title: r.title, description: r.description, successCriteria: r.success_criteria, assignedTo: r.assigned_to, status: r.status as Task['status'], retries: r.retries, planExpectation: r.plan_expectation, actualOutput: r.actual_output, deviationReport: r.deviation_report, createdAt: r.created_at, updatedAt: r.updated_at }
+}
+function rowToMemory(r: RawMemory): SessionMemory {
+  return { id: r.id, sessionId: r.session_id, type: r.type as SessionMemory['type'], content: r.content, createdAt: r.created_at, tokens: r.tokens, coveredUpToSeq: r.covered_up_to_seq }
 }
