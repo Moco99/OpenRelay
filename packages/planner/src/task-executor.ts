@@ -31,9 +31,18 @@ export class TaskExecutor {
     for await (const chunk of adapter.send(prompt, [])) {
       if (chunk.type === 'text') output += chunk.content
       if (chunk.type === 'error') {
-        this.bus.updateTask(task.id, { status: 'failed', actualOutput: output || null })
+        const errContent = chunk.content
+        this.bus.publish({
+          sessionId: this.sessionId,
+          fromAgent: this.agentId,
+          toAgent: 'session',
+          type: 'task_result',
+          payload: { taskId: task.id, output: errContent, failed: true },
+          tokensIn: 0, tokensOut: 0,
+        })
+        this.bus.updateTask(task.id, { status: 'failed', actualOutput: errContent })
         this.bus.upsertAgentState(this.sessionId, this.agentId, { status: 'error' })
-        throw new Error(`Executor error: ${chunk.content}`)
+        throw new Error(`Executor error: ${errContent}`)
       }
     }
 

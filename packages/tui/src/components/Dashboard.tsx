@@ -3,6 +3,8 @@ import { Box } from 'ink'
 import type { AgentConfig, MessageBus } from '@openrelay/core'
 import { useBusMessages, useCheckpoint, useAgentStates } from '../hooks.js'
 import { Header } from './Header.js'
+import { AgentPanel } from './AgentPanel.js'
+import { PlanPanel } from './PlanPanel.js'
 import { ActivityFeed } from './ActivityFeed.js'
 import { CheckpointPrompt } from './CheckpointPrompt.js'
 import { StatusBar } from './StatusBar.js'
@@ -26,7 +28,11 @@ export function Dashboard({ bus, sessionId, agents, startedAt, workingDir = proc
   return (
     <Box flexDirection="column">
       <Header agents={agents} workingDir={workingDir} />
-      <ActivityFeed messages={messages} />
+      <Box flexGrow={1}>
+        <AgentPanel agents={agents} states={agentStates} />
+        <PlanPanel bus={bus} sessionId={sessionId} messages={messages} />
+        <ActivityFeed messages={messages} workingDir={workingDir} />
+      </Box>
       {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}
       <StatusBar
         sessionId={sessionId}

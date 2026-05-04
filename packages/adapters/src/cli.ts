@@ -33,6 +33,10 @@ export class CliAdapter implements IAgentAdapter {
 
     let textBuffer = ''
     let hasRealUsage = false
+    let stderrBuf = ''
+    if (proc.stderr) {
+      proc.stderr.on('data', (chunk: unknown) => { stderrBuf += String(chunk) })
+    }
 
     if (proc.stdout) {
       let partial = ''
@@ -108,7 +112,8 @@ export class CliAdapter implements IAgentAdapter {
     await proc
 
     if (proc.exitCode !== 0 && proc.exitCode !== null) {
-      yield { type: 'error', content: `CLI "${cliName}" exited with code ${proc.exitCode}` }
+      const detail = stderrBuf.trim().slice(0, 500)
+      yield { type: 'error', content: `CLI "${cliName}" exited with code ${proc.exitCode}${detail ? ':\n' + detail : ''}` }
     } else {
       if (!hasRealUsage) this.usage.output += estimateTokens(textBuffer)
       yield { type: 'done', content: '' }
