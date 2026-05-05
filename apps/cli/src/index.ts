@@ -475,13 +475,14 @@ async function startInteractiveMode(dir = process.cwd()) {
 
   // ── ANSI ──────────────────────────────────────────────────────────────────────
 
-  const BAR  = '\x1b[48;5;239m' // dark gray bar background (like Gemini CLI)
-  const WHT  = '\x1b[97m'       // bright white text
-  const PHD  = '\x1b[38;5;102m' // placeholder (visible on dark bar)
-  const EL   = '\x1b[K'         // erase to end of line (inherits bg color → fills bar)
-  const HIDE = '\x1b[?25l'
-  const SHOW = '\x1b[?25h'
-  const BLOCK = '\x1b[2 q'      // steady block cursor shape
+  const BAR    = '\x1b[48;5;239m' // dark gray bar background
+  const BAR_FG = '\x1b[38;5;239m' // dark gray foreground (for half blocks)
+  const WHT    = '\x1b[97m'       // bright white text
+  const PHD    = '\x1b[38;5;102m' // placeholder (visible on dark bar)
+  const EL     = '\x1b[K'         // erase to end of line
+  const HIDE   = '\x1b[?25l'
+  const SHOW   = '\x1b[?25h'
+  const BLOCK  = '\x1b[2 q'       // steady block cursor shape
 
   // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -498,14 +499,16 @@ async function startInteractiveMode(dir = process.cwd()) {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   function render() {
+    const w = cols()
+
     // Dropdown
     const text = lines[0] ?? ''
     const dropdown = text.startsWith('/')
       ? REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text).slice(0, 6)
       : []
 
-    // Total height: dropdown lines + content lines (no separator)
-    const totalHeight = dropdown.length + lines.length
+    // Total height: dropdown + 1 (top half-pad) + lines.length + 1 (bottom half-pad)
+    const totalHeight = dropdown.length + 1 + lines.length + 1
 
     let buf = HIDE
 
@@ -520,14 +523,16 @@ async function startInteractiveMode(dir = process.cwd()) {
       buf += `  ${L}${cmd}${RS}  ${DM}${desc}${RS}\n`
     }
 
+    // ── Top padding (half block) ──
+    buf += `${BAR_FG}${'▄'.repeat(w)}${RS}\n`
+
     // Content lines: full-width dark gray background bar
     for (let i = 0; i < lines.length; i++) {
       const lineText = lines[i]!
 
-      buf += BAR  // start background bar
+      buf += BAR
 
       if (i === 0) {
-        // First line: " > text" or " > placeholder"
         if (lines.length === 1 && lineText === '') {
           buf += ` ${L}>${RS}${BAR} ${PHD}Type your message or @path/to/file`
         } else if (lineText.startsWith('/')) {
@@ -536,28 +541,25 @@ async function startInteractiveMode(dir = process.cwd()) {
           buf += ` ${L}>${RS}${BAR} ${WHT}${lineText}`
         }
       } else {
-        // Continuation lines: "   text" (aligned with first line text)
         buf += `   ${WHT}${lineText}`
       }
 
-      buf += `${EL}${RS}` // fill rest of line with bar bg, then reset
-
-      if (i < lines.length - 1) buf += '\n'
+      buf += `${EL}${RS}\n`
     }
 
+    // ── Bottom padding (half block) ──
+    buf += `${BAR_FG}${'▀'.repeat(w)}${RS}`
+
     // Position cursor
-    // Target row (0-indexed): dropdown.length + cursorLine
-    const targetRow = dropdown.length + cursorLine
+    // Target row (0-indexed): dropdown.length + 1 (top pad) + cursorLine
+    const targetRow = dropdown.length + 1 + cursorLine
     const lastRow = totalHeight - 1
     const upCount = lastRow - targetRow
     if (upCount > 0) buf += `\x1b[${upCount}A`
 
-    // Column: first line = 1(space) + 1(>) + 1(space) + cursorCol = 3 + cursorCol
-    //         other lines = 3(spaces) + cursorCol
-    const colOffset = 3 + cursorCol + 1 // +1 for 1-based terminal column
+    const colOffset = 3 + cursorCol + 1
     buf += `\r\x1b[${colOffset}C`
 
-    // Block cursor + white foreground + show
     buf += `${BLOCK}${WHT}${SHOW}`
 
     process.stdout.write(buf)
@@ -567,7 +569,8 @@ async function startInteractiveMode(dir = process.cwd()) {
   }
 
   function initialDraw() {
-    process.stdout.write('\n')
+    // Clear any stale content on current line, add spacing, then draw fresh
+    process.stdout.write('\x1b[2K\n')
     prevRenderHeight = 0
     screenCursorRow = 0
     render()
