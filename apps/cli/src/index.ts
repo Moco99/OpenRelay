@@ -674,7 +674,7 @@ async function startInteractiveMode(dir = process.cwd()) {
 
       if (row.isFirst) {
         if (lines.length === 1 && row.text === '') {
-          buf += ` ${L}>${RS}${BAR} ${PHD}Type your message or @path/to/file`
+          buf += ` ${L}>${RS}${BAR} ${PHD}  Type your message or @path/to/file`
         } else if (row.isCommand) {
           const spaceIdx = row.text.indexOf(' ')
           if (spaceIdx === -1) {

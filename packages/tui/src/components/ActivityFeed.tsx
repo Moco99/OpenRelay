@@ -206,7 +206,11 @@ export function ActivityFeed({ messages, workingDir = process.cwd(), agentStates
               <Text color="gray" dimColor>[{formatTime(msg.timestamp)}] </Text>
               <Text color={agentColor(activity.agent)} bold>{activity.agent}</Text>
             </Box>
-            <Text color={activity.color ?? 'white'} wrap="wrap"> {activity.line}</Text>
+            <Box flexDirection="column" flexShrink={1}>
+              {activity.line.split('\n').map((l, i) => (
+                <Text key={i} color={activity.color ?? 'white'} wrap="wrap"> {l}</Text>
+              ))}
+            </Box>
           </Box>
           {activity.detail && (
             <Box marginLeft={LABEL_WIDTH} flexDirection="column">
