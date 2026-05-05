@@ -94,7 +94,12 @@ export class PlanGenerator {
 
   private parsePlanTasks(raw: string): PlanTask[] {
     const json = extractJson(raw)
-    const parsed = JSON.parse(json) as { tasks: unknown[] }
+    let parsed: { tasks: unknown[] }
+    try {
+      parsed = JSON.parse(json) as { tasks: unknown[] }
+    } catch (e) {
+      throw new Error(`Model did not return valid JSON. Response was:\n${raw}`)
+    }
     if (!Array.isArray(parsed.tasks) || parsed.tasks.length === 0) {
       throw new Error('Plan must contain at least one task')
     }

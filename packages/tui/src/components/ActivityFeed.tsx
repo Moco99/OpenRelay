@@ -92,30 +92,20 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
 
     case 'task_result': {
       const failed = Boolean(p['failed'])
-      const output = String(p['output'] ?? '').trim()
+      const output = String(p['output'] ?? '').trim().slice(0, 1000)
       const files = extractFilePaths(output, workingDir)
-
-      // Split output into lines; if the LLM returned a single giant paragraph,
-      // smart-split it so the summary stays short and the rest goes to detail.
-      const rawLines = output.split('\n')
-      const { summary: firstSummary, detail: firstOverflow } = smartSplit(rawLines[0] ?? '', 100)
-      const restLines = rawLines.slice(1).join('\n').trim()
-      const detailParts = [firstOverflow, restLines].filter(Boolean)
-      const detailText = detailParts.join('\n').slice(0, 2000)
 
       if (failed) {
         return {
           agent: msg.fromAgent,
-          line: `✗ Failed — ${firstSummary}`,
-          ...(detailText ? { detail: detailText } : {}),
+          line: `✗ Failed — ${output}`,
           color: 'red',
         }
       }
 
       return {
         agent: msg.fromAgent,
-        line: `Done${firstSummary ? ` — ${firstSummary}` : ''}`,
-        ...(detailText ? { detail: detailText } : {}),
+        line: `Done — ${output}`,
         ...(files.length > 0 ? { files } : {}),
       }
     }

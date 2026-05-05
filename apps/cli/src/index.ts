@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { Command } from 'commander'
-import { join } from 'path'
-import { existsSync, writeFileSync } from 'fs'
+import { join, resolve, dirname, basename, isAbsolute } from 'path'
+import { existsSync, writeFileSync, readFileSync, statSync, readdirSync } from 'fs'
+import os from 'os'
 import { emitKeypressEvents } from 'readline'
 import { createElement } from 'react'
 import { render } from 'ink'
@@ -362,6 +363,35 @@ async function cmdHistory(dir: string, limit: number) {
   bus.close()
 }
 
+function expandFileDecorators(task: string, cwd: string): string {
+  const fileRegex = /(?:^|\s)@([^\s]+)/g;
+  const matches = [...task.matchAll(fileRegex)];
+  
+  if (matches.length === 0) return task;
+
+  const contextBlocks: string[] = [];
+  for (const match of matches) {
+    const rawPath = match[1]!;
+    const absPath = rawPath.startsWith('~/') 
+      ? join(os.homedir(), rawPath.slice(2)) 
+      : resolve(cwd, rawPath);
+    
+    if (existsSync(absPath) && statSync(absPath).isFile()) {
+      try {
+        const content = readFileSync(absPath, 'utf8');
+        contextBlocks.push(`\n=== File: ${rawPath} ===\n${content}\n==================\n`);
+      } catch (err) {
+        // ignore
+      }
+    }
+  }
+
+  if (contextBlocks.length > 0) {
+    return task + '\n\nAttached Files:\n' + contextBlocks.join('\n');
+  }
+  return task;
+}
+
 async function cmdRun(task: string, dir: string, dryRun = false, rl?: ReplHandle) {
   let config
   try {
@@ -371,8 +401,10 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: ReplHandle
     throw e
   }
 
+  const expandedTask = expandFileDecorators(task, dir)
+
   if (dryRun) {
-    console.log(`[openrelay] Dry run — ${task}`)
+    console.log(`[openrelay] Dry run — ${expandedTask}`)
     for (const a of config.agents) {
       const b = a.mode === 'api' ? `${a.provider}/${a.model}` : `${a.cli}/${a.model}`
       console.log(`  ${a.id.padEnd(14)} ${a.role.padEnd(8)} ${b}`)
@@ -409,7 +441,7 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: ReplHandle
 
   let completed = false
   try {
-    await manager.run(task)
+    await manager.run(expandedTask)
     completed = true
     // Give TUI hooks time to poll the final agent/task states before unmounting
     await new Promise(resolve => setTimeout(resolve, 600))
@@ -472,6 +504,37 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: ReplH
   }
 }
 
+function getCompletions(inputStr: string, cwd: string) {
+  const lastAt = inputStr.lastIndexOf('@');
+  if (lastAt === -1) return [];
+  // Ensure there's no space after @
+  const partial = inputStr.slice(lastAt + 1);
+  if (partial.includes(' ')) return [];
+  
+  const searchDir = isAbsolute(partial) || partial.startsWith('~/')
+    ? dirname(partial.startsWith('~/') ? join(os.homedir(), partial.slice(2)) : partial)
+    : resolve(cwd, dirname(partial));
+    
+  const searchBase = basename(partial);
+  const isDirInput = partial.endsWith('/') || partial === '';
+  
+  const actualDir = isDirInput ? resolve(cwd, partial.startsWith('~/') ? join(os.homedir(), partial.slice(2)) : partial) : searchDir;
+  const prefix = isDirInput ? '' : searchBase.toLowerCase();
+  
+  try {
+    const files = readdirSync(actualDir);
+    return files
+      .filter(f => f.toLowerCase().startsWith(prefix) && !f.startsWith('.'))
+      .map(f => {
+        try {
+          const isDir = statSync(join(actualDir, f)).isDirectory();
+          return { name: f + (isDir ? '/' : ''), isDir };
+        } catch { return { name: f, isDir: false } }
+      })
+      .slice(0, 6);
+  } catch (e) { return []; }
+}
+
 async function startInteractiveMode(dir = process.cwd()) {
   printBanner(dir)
 
@@ -492,11 +555,34 @@ async function startInteractiveMode(dir = process.cwd()) {
   let lines: string[] = ['']
   let cursorLine = 0
   let cursorCol  = 0
+  let dropdownSelectionIndex = 0
 
   let prevRenderHeight = 0
   let screenCursorRow  = 0
 
   const cols = () => process.stdout.columns || 80
+
+  function getActiveDropdown(): Array<{ cmd: string; desc: string }> {
+    const text = lines[0] ?? ''
+    if (text.startsWith('/') && !text.includes(' ')) {
+      return REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text).slice(0, 6)
+    }
+    
+    const currentLine = lines[cursorLine] ?? ''
+    const beforeCursor = currentLine.slice(0, cursorCol)
+    const afterCursor = currentLine.slice(cursorCol)
+    
+    const lastAt = beforeCursor.lastIndexOf('@')
+    if (lastAt !== -1 && !beforeCursor.slice(lastAt).includes(' ')) {
+      const fullWord = beforeCursor.slice(lastAt) + afterCursor.split(' ')[0]
+      const completions = getCompletions(fullWord, dir)
+      return completions.map(c => ({
+        cmd: c.name,
+        desc: c.isDir ? 'Dir' : 'File'
+      }))
+    }
+    return []
+  }
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -512,10 +598,11 @@ async function startInteractiveMode(dir = process.cwd()) {
     const w = cols()
 
     // Dropdown
-    const text = lines[0] ?? ''
-    const dropdown = text.startsWith('/')
-      ? REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text).slice(0, 6)
-      : []
+    const dropdown = getActiveDropdown()
+
+    // Clamp dropdownSelectionIndex
+    if (dropdownSelectionIndex >= dropdown.length) dropdownSelectionIndex = Math.max(0, dropdown.length - 1)
+    if (dropdownSelectionIndex < 0) dropdownSelectionIndex = 0
 
     // Build visual rows (handles wrapping and indentation)
     const visualRowsData: VisualRow[] = []
@@ -566,8 +653,12 @@ async function startInteractiveMode(dir = process.cwd()) {
     buf += '\r\x1b[J'
 
     // Dropdown entries (plain, above the bar)
-    for (const { cmd, desc } of dropdown) {
-      buf += `  ${L}${cmd}${RS}  ${DM}${desc}${RS}\n`
+    for (let i = 0; i < dropdown.length; i++) {
+      const { cmd, desc } = dropdown[i]!
+      const isSelected = i === dropdownSelectionIndex
+      const bg = isSelected ? '\x1b[48;5;236m' : '' // dark gray bg for selection
+      const resetBg = isSelected ? '\x1b[49m' : ''
+      buf += `${bg}  ${L}${cmd}${RS}${bg}  ${DM}${desc}${RS}${resetBg}\x1b[K\n`
     }
 
     // ── Top padding (half block) ──
@@ -749,6 +840,33 @@ async function startInteractiveMode(dir = process.cwd()) {
   if (process.stdin.isTTY) process.stdin.setRawMode(true)
   process.stdin.resume()
 
+  function applyAutocomplete(dropdown: Array<{cmd: string}>, index: number) {
+    const match = dropdown[index]
+    if (!match) return false
+    
+    const currentLine = lines[cursorLine] ?? ''
+    const beforeCursor = currentLine.slice(0, cursorCol)
+    const afterCursor = currentLine.slice(cursorCol)
+    
+    if (lines.length === 1 && currentLine.startsWith('/') && !currentLine.includes(' ')) {
+      lines[0] = match.cmd + ' '
+      cursorCol = lines[0].length
+      return true
+    }
+    
+    const lastAt = beforeCursor.lastIndexOf('@')
+    if (lastAt !== -1) {
+      const replaceStart = lastAt + 1
+      const nextSpace = afterCursor.indexOf(' ')
+      const afterReplace = nextSpace === -1 ? '' : afterCursor.slice(nextSpace)
+      const inserted = match.cmd + (match.cmd.endsWith('/') ? '' : ' ')
+      lines[cursorLine] = beforeCursor.slice(0, replaceStart) + inserted + afterReplace
+      cursorCol = replaceStart + inserted.length
+      return true
+    }
+    return false
+  }
+
   process.stdin.on('keypress', (str: string | undefined, key: { name: string; ctrl: boolean; shift: boolean; meta: boolean; sequence: string }) => {
     if (!key || busy) return
 
@@ -764,6 +882,13 @@ async function startInteractiveMode(dir = process.cwd()) {
         lines.splice(cursorLine + 1, 0, cur.slice(cursorCol))
         cursorLine++
         cursorCol = 0
+        dropdownSelectionIndex = 0
+        render()
+        return
+      }
+      const dd = getActiveDropdown()
+      if (dd.length > 0 && applyAutocomplete(dd, dropdownSelectionIndex)) {
+        dropdownSelectionIndex = 0
         render()
         return
       }
@@ -784,6 +909,7 @@ async function startInteractiveMode(dir = process.cwd()) {
         lines.splice(cursorLine, 1)
         cursorLine--
       }
+      dropdownSelectionIndex = 0
       render()
       return
     }
@@ -796,6 +922,7 @@ async function startInteractiveMode(dir = process.cwd()) {
         lines[cursorLine] = l + lines[cursorLine + 1]!
         lines.splice(cursorLine + 1, 1)
       }
+      dropdownSelectionIndex = 0
       render()
       return
     }
@@ -811,10 +938,22 @@ async function startInteractiveMode(dir = process.cwd()) {
       render(); return
     }
     if (key.name === 'up') {
+      const dd = getActiveDropdown()
+      if (dd.length > 0) {
+        dropdownSelectionIndex--
+        render()
+        return
+      }
       if (cursorLine > 0) { cursorLine--; cursorCol = Math.min(cursorCol, lines[cursorLine]!.length) }
       render(); return
     }
     if (key.name === 'down') {
+      const dd = getActiveDropdown()
+      if (dd.length > 0) {
+        dropdownSelectionIndex++
+        render()
+        return
+      }
       if (cursorLine < lines.length - 1) { cursorLine++; cursorCol = Math.min(cursorCol, lines[cursorLine]!.length) }
       render(); return
     }
@@ -823,10 +962,10 @@ async function startInteractiveMode(dir = process.cwd()) {
     if (key.name === 'end')  { cursorCol = lines[cursorLine]!.length; render(); return }
 
     if (key.name === 'tab') {
-      const t = lines[0] ?? ''
-      if (t.startsWith('/') && lines.length === 1) {
-        const m = REPL_COMMANDS.filter(r => r.cmd.startsWith(t))
-        if (m.length === 1) { lines[0] = m[0]!.cmd + ' '; cursorCol = lines[0].length }
+      const dd = getActiveDropdown()
+      if (dd.length > 0) {
+        applyAutocomplete(dd, dropdownSelectionIndex)
+        dropdownSelectionIndex = 0
       }
       render(); return
     }
@@ -837,6 +976,7 @@ async function startInteractiveMode(dir = process.cwd()) {
       const l = lines[cursorLine]!
       lines[cursorLine] = l.slice(0, cursorCol) + str + l.slice(cursorCol)
       cursorCol += str.length
+      dropdownSelectionIndex = 0
       render()
     }
   })
