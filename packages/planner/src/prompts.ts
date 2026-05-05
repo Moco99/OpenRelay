@@ -25,7 +25,10 @@ Rules:
 - retryStrategy: "none" | "resubmit" | "escalate"
 
 ${workingMemory ? `Context from this session:\n${workingMemory}\n` : ''}\
-Task to plan: ${task}`
+Task to plan:
+${task}
+
+CRITICAL: You are the PLANNER, not the executor. Do not attempt to write the final code or complete the user's task yourself. Your ONLY output must be a valid JSON object matching the Schema above representing the plan. Do NOT wrap the JSON in markdown blocks like \`\`\`json, just output the raw JSON.`;
 
 export const SUMMARY_PROMPT = (context: string): string => `\
 You are a session historian for a multi-agent software project.

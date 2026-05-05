@@ -138,11 +138,9 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
 
     case 'deviation_detected': {
       const reason = String(p['reason'] ?? '')
-      const { summary, detail } = smartSplit(reason, 100)
       return {
         agent: msg.fromAgent,
-        line: `⚠ Deviation${summary ? ` — ${summary}` : ''}`,
-        ...(detail ? { detail } : {}),
+        line: `⚠ Deviation${reason ? ` — ${reason}` : ''}`,
         color: 'yellow',
       }
     }
@@ -151,11 +149,9 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       const reason = String(p['reason'] ?? '')
       if (reason === 'executor_error') {
         const err = String(p['error'] ?? '').replace(/^(Error: )?(Executor error: )?/, '')
-        const { summary, detail } = smartSplit(err, 100)
         return {
           agent: 'session',
-          line: `✗ Session failed — ${summary}`,
-          ...(detail ? { detail } : {}),
+          line: `✗ Session failed — ${err}`,
           color: 'red',
         }
       }

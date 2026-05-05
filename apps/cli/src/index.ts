@@ -379,7 +379,7 @@ function expandFileDecorators(task: string, cwd: string): string {
     if (existsSync(absPath) && statSync(absPath).isFile()) {
       try {
         const content = readFileSync(absPath, 'utf8');
-        contextBlocks.push(`\n=== File: ${rawPath} ===\n${content}\n==================\n`);
+        contextBlocks.push(`--- BEGIN ATTACHED FILE: ${rawPath} ---\n${content}\n--- END ATTACHED FILE ---`);
       } catch (err) {
         // ignore
       }
@@ -387,7 +387,7 @@ function expandFileDecorators(task: string, cwd: string): string {
   }
 
   if (contextBlocks.length > 0) {
-    return task + '\n\nAttached Files:\n' + contextBlocks.join('\n');
+    return `<user_attached_context>\nThe following files were attached by the user for reference:\n\n${contextBlocks.join('\n\n')}\n</user_attached_context>\n\nUser Task Request:\n${task}`;
   }
   return task;
 }
