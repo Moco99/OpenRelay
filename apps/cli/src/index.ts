@@ -411,6 +411,8 @@ async function cmdRun(task: string, dir: string, dryRun = false, rl?: ReplHandle
   try {
     await manager.run(task)
     completed = true
+    // Give TUI hooks time to poll the final agent/task states before unmounting
+    await new Promise(resolve => setTimeout(resolve, 600))
   } finally {
     process.off('SIGINT', sigintHandler)
     // Resume readline BEFORE unmounting — keeps the event loop alive so Node doesn't exit

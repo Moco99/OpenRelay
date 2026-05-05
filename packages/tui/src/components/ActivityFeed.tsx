@@ -18,12 +18,16 @@ interface Activity {
   color?: string
 }
 
-// Matches absolute or relative paths that look like file paths with extensions
+// Matches:
+//  1. Absolute/relative paths with extensions: ./foo.ts, /abs/bar.py, ~/dir/baz.rs
+//  2. Bare filenames with extensions in backticks or quotes: `random_sum.py`, 'hello.txt'
 const FILE_PATH_RE = /(?:^|\s|`|"|')([./~][\w./\\-]*\.[\w]{1,10})/gm
+const BARE_FILE_RE = /[`'"]([\w][\w.-]*\.[\w]{1,10})[`'"]/gm
 
 function extractFilePaths(text: string, workingDir: string): string[] {
   const paths: string[] = []
   let m: RegExpExecArray | null
+
   FILE_PATH_RE.lastIndex = 0
   while ((m = FILE_PATH_RE.exec(text)) !== null) {
     const p = m[1]
@@ -31,7 +35,33 @@ function extractFilePaths(text: string, workingDir: string): string[] {
     const abs = p.startsWith('/') ? p : resolve(workingDir, p)
     if (!paths.includes(abs)) paths.push(abs)
   }
+
+  // Also extract bare filenames mentioned in quotes/backticks (e.g. `random_sum.py`)
+  BARE_FILE_RE.lastIndex = 0
+  while ((m = BARE_FILE_RE.exec(text)) !== null) {
+    const p = m[1]
+    if (!p) continue
+    const abs = resolve(workingDir, p)
+    if (!paths.includes(abs)) paths.push(abs)
+  }
+
   return paths.slice(0, 6)
+}
+
+/**
+ * Smart-split a long text into a short summary line and a detail block.
+ * Unlike hard truncation, the full text is preserved — it just moves to `detail`.
+ */
+function smartSplit(text: string, maxSummary = 100): { summary: string; detail: string } {
+  if (text.length <= maxSummary) return { summary: text, detail: '' }
+
+  // Find a word boundary near the limit
+  const cut = text.lastIndexOf(' ', maxSummary)
+  const breakAt = cut > maxSummary * 0.5 ? cut : maxSummary
+  return {
+    summary: text.slice(0, breakAt),
+    detail: text.slice(breakAt).trim(),
+  }
 }
 
 function toActivity(msg: Message, workingDir: string): Activity | null {
@@ -60,25 +90,29 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
     case 'task_result': {
       const failed = Boolean(p['failed'])
       const output = String(p['output'] ?? '').trim()
-      const lines = output.split('\n')
-      const firstLine = lines[0] ?? ''
+      const files = extractFilePaths(output, workingDir)
+
+      // Split output into lines; if the LLM returned a single giant paragraph,
+      // smart-split it so the summary stays short and the rest goes to detail.
+      const rawLines = output.split('\n')
+      const { summary: firstSummary, detail: firstOverflow } = smartSplit(rawLines[0] ?? '', 100)
+      const restLines = rawLines.slice(1).join('\n').trim()
+      const detailParts = [firstOverflow, restLines].filter(Boolean)
+      const detailText = detailParts.join('\n').slice(0, 2000)
 
       if (failed) {
-        const detailText = lines.slice(1).join('\n').trim().slice(0, 2000)
         return {
           agent: msg.fromAgent,
-          line: `✗ Failed — ${firstLine}`,
+          line: `✗ Failed — ${firstSummary}`,
           ...(detailText ? { detail: detailText } : {}),
           color: 'red',
         }
       }
 
-      const rest = lines.slice(1).join('\n').trim()
-      const files = extractFilePaths(output, workingDir)
       return {
         agent: msg.fromAgent,
-        line: `Done${firstLine ? ` — ${firstLine}` : ''}`,
-        ...(rest ? { detail: rest.slice(0, 2000) } : {}),
+        line: `Done${firstSummary ? ` — ${firstSummary}` : ''}`,
+        ...(detailText ? { detail: detailText } : {}),
         ...(files.length > 0 ? { files } : {}),
       }
     }
@@ -86,11 +120,14 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
     case 'task_progress': {
       const text = String(p['text'] ?? p['output'] ?? '').trim()
       if (!text) return null
-      const lines = text.split('\n')
-      const detailText = lines.slice(1).join('\n').trim().slice(0, 2000)
+      const rawLines = text.split('\n')
+      const { summary, detail: overflow } = smartSplit(rawLines[0] ?? '', 100)
+      const restLines = rawLines.slice(1).join('\n').trim()
+      const detailParts = [overflow, restLines].filter(Boolean)
+      const detailText = detailParts.join('\n').slice(0, 2000)
       return {
         agent: msg.fromAgent,
-        line: lines[0] ?? '…',
+        line: summary || '…',
         ...(detailText ? { detail: detailText } : {}),
       }
     }
@@ -108,14 +145,26 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
 
     case 'deviation_detected': {
       const reason = String(p['reason'] ?? '')
-      return { agent: msg.fromAgent, line: `⚠ Deviation${reason ? ` — ${reason}` : ''}`, color: 'yellow' }
+      const { summary, detail } = smartSplit(reason, 100)
+      return {
+        agent: msg.fromAgent,
+        line: `⚠ Deviation${summary ? ` — ${summary}` : ''}`,
+        ...(detail ? { detail } : {}),
+        color: 'yellow',
+      }
     }
 
     case 'session_end': {
       const reason = String(p['reason'] ?? '')
       if (reason === 'executor_error') {
-        const err = String(p['error'] ?? '').replace(/^(Error: )?(Executor error: )?/, '').slice(0, 100)
-        return { agent: 'session', line: `✗ Session failed — ${err}`, color: 'red' }
+        const err = String(p['error'] ?? '').replace(/^(Error: )?(Executor error: )?/, '')
+        const { summary, detail } = smartSplit(err, 100)
+        return {
+          agent: 'session',
+          line: `✗ Session failed — ${summary}`,
+          ...(detail ? { detail } : {}),
+          color: 'red',
+        }
       }
       if (reason === 'plan_rejected') {
         return { agent: 'session', line: '◼ Plan rejected' }
@@ -127,6 +176,9 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       return null
   }
 }
+
+// Fixed-width column for timestamp + agent name
+const LABEL_WIDTH = 25
 
 export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
   const entries: Array<{ msg: Message; activity: Activity }> = []
@@ -142,19 +194,21 @@ export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
       {visible.map(({ msg, activity }) => (
         <Box key={msg.id} flexDirection="column">
           <Box>
-            <Text color="gray" dimColor>[{formatTime(msg.timestamp)}] </Text>
-            <Text color={agentColor(activity.agent)} bold>{activity.agent.padEnd(13)}</Text>
-            <Text color={activity.color ?? 'white'}> {activity.line}</Text>
+            <Box minWidth={LABEL_WIDTH} flexShrink={0}>
+              <Text color="gray" dimColor>[{formatTime(msg.timestamp)}] </Text>
+              <Text color={agentColor(activity.agent)} bold>{activity.agent}</Text>
+            </Box>
+            <Text color={activity.color ?? 'white'} wrap="wrap"> {activity.line}</Text>
           </Box>
           {activity.detail && (
-            <Box marginLeft={24} flexDirection="column">
-              {activity.detail.split('\n').slice(0, 8).map((l, i) => (
-                <Text key={i} color="gray">{l}</Text>
+            <Box marginLeft={LABEL_WIDTH} flexDirection="column">
+              {activity.detail.split('\n').slice(0, 12).map((l, i) => (
+                <Text key={i} color="gray" wrap="wrap">{l}</Text>
               ))}
             </Box>
           )}
           {activity.files && activity.files.length > 0 && (
-            <Box marginLeft={24} flexDirection="column">
+            <Box marginLeft={LABEL_WIDTH} flexDirection="column">
               {activity.files.map((f, i) => {
                 const rel = relative(workingDir, f) || f
                 // OSC 8 hyperlink: \x1b]8;;URL\x07visible\x1b]8;;\x07

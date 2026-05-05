@@ -168,7 +168,11 @@ export class SessionManager {
       }
     }
 
-    // 4. Complete
+    // 4. Complete — mark all agents idle so the TUI reflects final state
+    for (const agent of this.config.agents) {
+      this.bus.upsertAgentState(this.sessionId, agent.id, { status: 'idle' })
+    }
+
     this.bus.updateSession(this.sessionId, { status: 'completed', endedAt: Date.now() })
     this.bus.publish({
       sessionId: this.sessionId,
