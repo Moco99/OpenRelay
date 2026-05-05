@@ -30,6 +30,16 @@ export class TaskExecutor {
 
     for await (const chunk of adapter.send(prompt, [])) {
       if (chunk.type === 'text') output += chunk.content
+      if (chunk.type === 'thinking') {
+        this.bus.publish({
+          sessionId: this.sessionId,
+          fromAgent: this.agentId,
+          toAgent: 'session',
+          type: 'task_progress',
+          payload: { text: chunk.content },
+          tokensIn: 0, tokensOut: 0,
+        })
+      }
       if (chunk.type === 'error') {
         const errContent = chunk.content
         this.bus.publish({

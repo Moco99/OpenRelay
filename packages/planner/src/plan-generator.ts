@@ -74,7 +74,19 @@ export class PlanGenerator {
   private async collectResponse(prompt: string): Promise<string> {
     let buffer = ''
     for await (const chunk of this.adapter.send(prompt, [])) {
-      if (chunk.type === 'text') buffer += chunk.content
+      if (chunk.type === 'text') {
+        buffer += chunk.content
+      }
+      if (chunk.type === 'thinking') {
+        this.bus.publish({
+          sessionId: this.sessionId,
+          fromAgent: this.config.id,
+          toAgent: 'session',
+          type: 'task_progress',
+          payload: { text: chunk.content },
+          tokensIn: 0, tokensOut: 0,
+        })
+      }
       if (chunk.type === 'error') throw new Error(`Adapter error: ${chunk.content}`)
     }
     return buffer

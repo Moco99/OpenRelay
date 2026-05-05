@@ -500,14 +500,12 @@ async function startInteractiveMode(dir = process.cwd()) {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
-  /**
-   * Calculate the number of visual rows a line occupies in the terminal,
-   * accounting for word-wrapping at terminal width.
-   */
-  function visualRows(text: string, prefix: number, w: number): number {
-    const len = prefix + text.length
-    if (len === 0) return 1
-    return Math.ceil(len / w) || 1
+  interface VisualRow {
+    text: string
+    isFirst: boolean
+    isCommand: boolean
+    logicalLine: number
+    logicalStart: number
   }
 
   function render() {
@@ -519,18 +517,49 @@ async function startInteractiveMode(dir = process.cwd()) {
       ? REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text).slice(0, 6)
       : []
 
-    // Calculate total VISUAL height (accounts for wrapped lines)
-    let totalVisualHeight = dropdown.length  // dropdown rows (1 visual row each)
-    totalVisualHeight += 1                    // top half-block padding
+    // Build visual rows (handles wrapping and indentation)
+    const visualRowsData: VisualRow[] = []
+    
     for (let i = 0; i < lines.length; i++) {
-      const prefix = i === 0 ? 4 : 3        // "> " prefix vs "   " prefix
-      totalVisualHeight += visualRows(lines[i]!, prefix, w)
+      const rawLine = lines[i]!
+      const isFirst = i === 0
+      const isCommand = isFirst && rawLine.startsWith('/')
+      const prefixLen = 3 // " > " or "   "
+      const maxLen = Math.max(1, w - prefixLen) // ensure at least 1 char per line
+
+      if (rawLine.length === 0) {
+        visualRowsData.push({ text: '', isFirst, isCommand, logicalLine: i, logicalStart: 0 })
+      } else {
+        let charIndex = 0
+        while (charIndex < rawLine.length) {
+          const chunk = rawLine.slice(charIndex, charIndex + maxLen)
+          visualRowsData.push({ 
+            text: chunk, 
+            isFirst: isFirst && charIndex === 0, 
+            isCommand: isCommand && charIndex === 0, 
+            logicalLine: i, 
+            logicalStart: charIndex 
+          })
+          charIndex += maxLen
+        }
+        // If cursor is at the very end AND it exactly filled the last row, append an empty row for the cursor to wrap to
+        if (cursorLine === i && cursorCol === rawLine.length && rawLine.length % maxLen === 0) {
+          visualRowsData.push({
+            text: '',
+            isFirst: false,
+            isCommand: false,
+            logicalLine: i,
+            logicalStart: rawLine.length
+          })
+        }
+      }
     }
-    totalVisualHeight += 1                    // bottom half-block padding
+
+    const totalVisualHeight = dropdown.length + 1 + visualRowsData.length + 1
 
     let buf = HIDE
 
-    // Move up to top of previous render (use prev VISUAL height)
+    // Move up to top of previous render
     if (prevRenderHeight > 0 && screenCursorRow > 0) {
       buf += `\x1b[${screenCursorRow}A`
     }
@@ -544,44 +573,46 @@ async function startInteractiveMode(dir = process.cwd()) {
     // ── Top padding (half block) ──
     buf += `\x1b[?7l${BAR_FG}${'▄'.repeat(w)}${RS}\x1b[?7h\n`
 
-    // Content lines: full-width dark gray background bar
-    // Calculate cursor's visual row as we go
-    let cursorVisualRow = dropdown.length + 1  // start after dropdown + top pad
-    for (let i = 0; i < lines.length; i++) {
-      const lineText = lines[i]!
-      const prefix = i === 0 ? 4 : 3
+    // Content lines
+    let cursorVisualRow = dropdown.length + 1
+    let cursorColOffset = 3
 
+    for (let i = 0; i < visualRowsData.length; i++) {
+      const row = visualRowsData[i]!
       buf += BAR
 
-      if (i === 0) {
-        if (lines.length === 1 && lineText === '') {
+      if (row.isFirst) {
+        if (lines.length === 1 && row.text === '') {
           buf += ` ${L}>${RS}${BAR} ${PHD}Type your message or @path/to/file`
-        } else if (lineText.startsWith('/')) {
-          const spaceIdx = lineText.indexOf(' ')
+        } else if (row.isCommand) {
+          const spaceIdx = row.text.indexOf(' ')
           if (spaceIdx === -1) {
-            buf += ` ${L}> ${lineText}${RS}${BAR}`
+            buf += ` ${L}> ${row.text}${RS}${BAR}`
           } else {
-            const cmd = lineText.slice(0, spaceIdx)
-            const rest = lineText.slice(spaceIdx)
+            const cmd = row.text.slice(0, spaceIdx)
+            const rest = row.text.slice(spaceIdx)
             buf += ` ${L}> ${cmd}${RS}${BAR}${WHT}${rest}`
           }
         } else {
-          buf += ` ${L}>${RS}${BAR} ${WHT}${lineText}`
+          buf += ` ${L}>${RS}${BAR} ${WHT}${row.text}`
         }
       } else {
-        buf += `   ${WHT}${lineText}`
+        buf += `   ${WHT}${row.text}`
       }
 
       buf += `${EL}${RS}\n`
 
-      // Track cursor visual row
-      if (i < cursorLine) {
-        cursorVisualRow += visualRows(lineText, prefix, w)
-      } else if (i === cursorLine) {
-        // Cursor is on this line — figure out which visual row within this line
-        const cursorAbsCol = prefix + cursorCol
-        const wrappedRow = Math.floor(cursorAbsCol / w)
-        cursorVisualRow += wrappedRow
+      // Check if cursor is on this visual row
+      if (row.logicalLine === cursorLine) {
+        const rowEnd = row.logicalStart + row.text.length
+        if (cursorCol >= row.logicalStart && cursorCol < rowEnd) {
+          cursorVisualRow = dropdown.length + 1 + i
+          cursorColOffset = 3 + (cursorCol - row.logicalStart)
+        } else if (cursorCol === rowEnd && cursorCol === lines[cursorLine]!.length) {
+          // Matches the last row of the logical line if cursor is at the end
+          cursorVisualRow = dropdown.length + 1 + i
+          cursorColOffset = 3 + (cursorCol - row.logicalStart)
+        }
       }
     }
 
@@ -593,14 +624,10 @@ async function startInteractiveMode(dir = process.cwd()) {
     const upCount = lastVisualRow - cursorVisualRow
     if (upCount > 0) buf += `\x1b[${upCount}A`
 
-    // Column offset (accounting for wrapping within the line)
-    const cursorPrefix = cursorLine === 0 ? 4 : 3
-    const cursorAbsCol = cursorPrefix + cursorCol
-    const colInRow = cursorAbsCol % w
-    buf += `\r\x1b[${colInRow}C`
+    // Column offset
+    buf += `\r\x1b[${cursorColOffset}C`
 
-    // Draw a white inverted cursor character instead of using the terminal cursor
-    // This gives us full control over cursor color (white, not blue)
+    // Draw cursor
     const curLineText = lines[cursorLine]!
     const charUnderCursor = cursorCol < curLineText.length ? curLineText[cursorCol]! : ' '
     buf += `\x1b[7m${WHT}${charUnderCursor}${RS}`

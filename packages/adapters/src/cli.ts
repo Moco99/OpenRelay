@@ -76,7 +76,14 @@ export class CliAdapter implements IAgentAdapter {
               continue
             }
 
-            // All other JSON events (system, assistant, user, tool_use…) → skip
+            // Stream Claude Code tool usage as 'thinking' so it shows up in UI
+            if (obj['type'] === 'tool_use') {
+              const name = String(obj['name'] ?? 'unknown_tool')
+              yield { type: 'thinking', content: `[Running tool: ${name}]` }
+              continue
+            }
+
+            // All other JSON events (system, assistant, user, tool_result…) → skip
           } catch {
             // Not JSON — plain text output (e.g. Gemini)
             textBuffer += trimmed + '\n'
