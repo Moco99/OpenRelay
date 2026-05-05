@@ -11,6 +11,7 @@ import { MessageBus } from '@openrelay/core'
 import { createAdapter } from '@openrelay/adapters'
 import { SessionManager } from '@openrelay/planner'
 import { Dashboard } from '@openrelay/tui'
+import { cmdSetup } from './setup.js'
 
 // ─── ANSI colors ──────────────────────────────────────────────────────────────
 
@@ -485,6 +486,7 @@ async function handleCommand(cmd: string, args: string[], dir: string, rl: ReplH
   switch (cmd) {
     case 'init':    await cmdInit(dir, args.includes('--force')); break
     case 'config':  await cmdConfig(dir, rl); break
+    case 'setup':   await cmdSetup(rl); break
     case 'status':  await cmdStatus(dir); break
     case 'history': {
       const li = args.indexOf('--limit')
