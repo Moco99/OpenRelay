@@ -32,24 +32,42 @@ export class SummaryGenerator {
     parts.push(serializeWorkingMemory(newMessages, tasks))
     const context = parts.join('\n')
 
+    this.bus.upsertAgentState(this.sessionId, this.config.id, { status: 'working' })
+    const initialUsage = this.adapter.getTokensUsed()
+
     let buffer = ''
-    for await (const chunk of this.adapter.send(SUMMARY_PROMPT(context), [])) {
-      if (chunk.type === 'text') buffer += chunk.content
-      if (chunk.type === 'error') break // non-fatal — skip this summarization
+    try {
+      for await (const chunk of this.adapter.send(SUMMARY_PROMPT(context), [])) {
+        if (chunk.type === 'text') buffer += chunk.content
+        if (chunk.type === 'error') break // non-fatal — skip this summarization
+      }
+    } finally {
+      const finalUsage = this.adapter.getTokensUsed()
+      const deltaIn = finalUsage.input - initialUsage.input
+      const deltaOut = finalUsage.output - initialUsage.output
+
+      this.bus.upsertAgentState(this.sessionId, this.config.id, {
+        tokensIn: deltaIn,
+        tokensOut: deltaOut,
+        status: 'idle',
+      })
     }
 
     if (!buffer.trim()) return null
 
     const tokens = Math.ceil(buffer.length / 4)
-    const usage = this.adapter.getTokensUsed()
+    const finalUsage = this.adapter.getTokensUsed()
+    const deltaIn = finalUsage.input - initialUsage.input
+    const deltaOut = finalUsage.output - initialUsage.output
+
     this.bus.publish({
       sessionId: this.sessionId,
       fromAgent: this.config.id,
       toAgent: 'session',
       type: 'memory_update',
       payload: { coveredUpToSeq: lastMsg.seq },
-      tokensIn: usage.input,
-      tokensOut: usage.output,
+      tokensIn: deltaIn,
+      tokensOut: deltaOut,
     })
 
     return this.bus.addMemory(this.sessionId, 'summary', buffer.trim(), tokens, lastMsg.seq)

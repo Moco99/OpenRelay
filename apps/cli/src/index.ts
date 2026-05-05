@@ -537,7 +537,14 @@ async function startInteractiveMode(dir = process.cwd()) {
         if (lines.length === 1 && lineText === '') {
           buf += ` ${L}>${RS}${BAR} ${PHD}Type your message or @path/to/file`
         } else if (lineText.startsWith('/')) {
-          buf += ` ${L}> ${lineText}${RS}${BAR}`
+          const spaceIdx = lineText.indexOf(' ')
+          if (spaceIdx === -1) {
+            buf += ` ${L}> ${lineText}${RS}${BAR}`
+          } else {
+            const cmd = lineText.slice(0, spaceIdx)
+            const rest = lineText.slice(spaceIdx)
+            buf += ` ${L}> ${cmd}${RS}${BAR}${WHT}${rest}`
+          }
         } else {
           buf += ` ${L}>${RS}${BAR} ${WHT}${lineText}`
         }
@@ -605,7 +612,14 @@ async function startInteractiveMode(dir = process.cwd()) {
         const lineText = submittedLines[i]!
         if (i === 0) {
           if (lineText.startsWith('/')) {
-            buf += ` ${L}> ${lineText}${RS}${BAR}`
+            const spaceIdx = lineText.indexOf(' ')
+            if (spaceIdx === -1) {
+              buf += ` ${L}> ${lineText}${RS}${BAR}`
+            } else {
+              const cmd = lineText.slice(0, spaceIdx)
+              const rest = lineText.slice(spaceIdx)
+              buf += ` ${L}> ${cmd}${RS}${BAR}${WHT}${rest}`
+            }
           } else {
             buf += ` ${L}>${RS}${BAR} ${WHT}${lineText}`
           }

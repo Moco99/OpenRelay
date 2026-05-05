@@ -14,8 +14,12 @@ export class PlanGenerator {
   ) {}
 
   async generate(task: string): Promise<Plan> {
-    const workingMemory = buildContext(this.bus, this.sessionId)
-    const prompt = PLAN_PROMPT(task, workingMemory)
+    this.bus.upsertAgentState(this.sessionId, this.config.id, { status: 'working' })
+    const initialUsage = this.adapter.getTokensUsed()
+    
+    try {
+      const workingMemory = buildContext(this.bus, this.sessionId)
+      const prompt = PLAN_PROMPT(task, workingMemory)
     const raw = await this.collectResponse(prompt)
     const tasks = this.parsePlanTasks(raw)
 
@@ -42,18 +46,29 @@ export class PlanGenerator {
       })
     }
 
-    const usage = this.adapter.getTokensUsed()
+    const finalUsage = this.adapter.getTokensUsed()
+    const deltaIn = finalUsage.input - initialUsage.input
+    const deltaOut = finalUsage.output - initialUsage.output
+
+    this.bus.upsertAgentState(this.sessionId, this.config.id, {
+      tokensIn: deltaIn,
+      tokensOut: deltaOut,
+    })
+
     this.bus.publish({
       sessionId: this.sessionId,
       fromAgent: this.config.id,
       toAgent: 'session',
       type: 'plan_generated',
       payload: plan,
-      tokensIn: usage.input,
-      tokensOut: usage.output,
+      tokensIn: deltaIn,
+      tokensOut: deltaOut,
     })
 
     return plan
+    } finally {
+      this.bus.upsertAgentState(this.sessionId, this.config.id, { status: 'idle' })
+    }
   }
 
   private async collectResponse(prompt: string): Promise<string> {

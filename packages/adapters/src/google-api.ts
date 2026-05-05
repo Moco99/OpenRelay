@@ -7,6 +7,7 @@ export class GoogleAdapter implements IAgentAdapter {
   constructor(private config: AgentConfig) {}
 
   async *send(prompt: string, context: ContextMessage[], _options: SendOptions = {}): AsyncGenerator<AgentChunk> {
+    const timeout = _options.timeout ?? 120_000
     type GoogleAICtor = new (apiKey: string) => Record<string, unknown>
     let GoogleGenerativeAI: GoogleAICtor
     try {
@@ -39,7 +40,12 @@ export class GoogleAdapter implements IAgentAdapter {
     const getModel = genai['getGenerativeModel'] as (opts: { model: string }) => ModelApi
     const model = getModel.call(genai, { model: this.config.model })
     const chat = model.startChat({ history })
-    const result = await chat.sendMessageStream(prompt)
+
+    // Race the API call against a timeout
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Google API timed out after ${timeout}ms`)), timeout),
+    )
+    const result = await Promise.race([chat.sendMessageStream(prompt), timeoutPromise])
 
     for await (const chunk of result.stream) {
       const text = chunk.text()

@@ -5,12 +5,15 @@ import type { IAgentAdapter, AgentChunk } from '@openrelay/adapters'
 import type { AgentConfig } from '@openrelay/core'
 
 function mockAdapter(response: string, tokensIn = 10, tokensOut = 50): IAgentAdapter {
+  const usage = { input: 0, output: 0 }
   return {
     async *send(_prompt: string): AsyncGenerator<AgentChunk> {
+      usage.input += tokensIn
       yield { type: 'text', content: response }
+      usage.output += tokensOut
       yield { type: 'done', content: '' }
     },
-    getTokensUsed: () => ({ input: tokensIn, output: tokensOut }),
+    getTokensUsed: () => ({ ...usage }),
     terminate: async () => {},
   }
 }

@@ -54,7 +54,7 @@ export class TaskExecutor {
       fromAgent: this.agentId,
       toAgent: 'session',
       type: 'task_result',
-      payload: { taskId: task.id, output: output.slice(0, 500) },
+      payload: { taskId: task.id, output: output.slice(0, 2000) },
       tokensIn: usage.input, tokensOut: usage.output,
     })
     this.bus.upsertAgentState(this.sessionId, this.agentId, { status: 'idle' })

@@ -61,10 +61,10 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       const failed = Boolean(p['failed'])
       const output = String(p['output'] ?? '').trim()
       const lines = output.split('\n')
-      const firstLine = lines[0]?.slice(0, 70) ?? ''
+      const firstLine = lines[0] ?? ''
 
       if (failed) {
-        const detailText = lines.slice(1).join('\n').trim().slice(0, 600)
+        const detailText = lines.slice(1).join('\n').trim().slice(0, 2000)
         return {
           agent: msg.fromAgent,
           line: `✗ Failed — ${firstLine}`,
@@ -78,7 +78,7 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       return {
         agent: msg.fromAgent,
         line: `Done${firstLine ? ` — ${firstLine}` : ''}`,
-        ...(rest ? { detail: rest.slice(0, 600) } : {}),
+        ...(rest ? { detail: rest.slice(0, 2000) } : {}),
         ...(files.length > 0 ? { files } : {}),
       }
     }
@@ -87,10 +87,10 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
       const text = String(p['text'] ?? p['output'] ?? '').trim()
       if (!text) return null
       const lines = text.split('\n')
-      const detailText = lines.slice(1).join('\n').trim().slice(0, 400)
+      const detailText = lines.slice(1).join('\n').trim().slice(0, 2000)
       return {
         agent: msg.fromAgent,
-        line: lines[0]?.slice(0, 80) ?? '…',
+        line: lines[0] ?? '…',
         ...(detailText ? { detail: detailText } : {}),
       }
     }
@@ -107,7 +107,7 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
     }
 
     case 'deviation_detected': {
-      const reason = String(p['reason'] ?? '').slice(0, 80)
+      const reason = String(p['reason'] ?? '')
       return { agent: msg.fromAgent, line: `⚠ Deviation${reason ? ` — ${reason}` : ''}`, color: 'yellow' }
     }
 

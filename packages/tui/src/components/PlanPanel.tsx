@@ -45,11 +45,10 @@ export function PlanPanel({ bus, sessionId, messages }: Props) {
         const status = taskMap.get(t.id) ?? 'pending'
         const icon  = STATUS_ICONS[status]  ?? '○'
         const color = STATUS_COLORS[status] ?? 'gray'
-        const title = t.title.length > 26 ? t.title.slice(0, 24) + '…' : t.title
         return (
           <Box key={t.id} marginTop={1} gap={1}>
             <Text color={color}>{icon}</Text>
-            <Text color={color}>{title}</Text>
+            <Text color={color} wrap="wrap">{t.title}</Text>
           </Box>
         )
       })}

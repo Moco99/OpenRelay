@@ -112,10 +112,28 @@ export class SessionManager {
         return
       }
 
+      // Publish progress so the user sees the orchestrator is actively evaluating
+      this.bus.publish({
+        sessionId: this.sessionId,
+        fromAgent: plannerConfig.id,
+        toAgent: 'session',
+        type: 'task_progress',
+        payload: { text: `Evaluating task: ${busTask.title}` },
+        tokensIn: 0, tokensOut: 0,
+      })
+
       let report = await deviationDetector.evaluate(busTask, output)
 
       // Retry once if deviation found and strategy allows
       if (!report.passed && retryStrategy !== 'none' && busTask.retries < maxRetries) {
+        this.bus.publish({
+          sessionId: this.sessionId,
+          fromAgent: plannerConfig.id,
+          toAgent: 'session',
+          type: 'task_progress',
+          payload: { text: `Retrying task: ${busTask.title} (attempt ${busTask.retries + 2})` },
+          tokensIn: 0, tokensOut: 0,
+        })
         const retried = { ...busTask, retries: busTask.retries + 1, status: 'pending' as const }
         this.bus.updateTask(busTask.id, { retries: retried.retries, status: 'pending' })
         try {

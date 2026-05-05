@@ -12,8 +12,12 @@ export class DeviationDetector {
   ) {}
 
   async evaluate(task: Task, actualOutput: string): Promise<DeviationReport> {
-    const prompt = DEVIATION_PROMPT(task.title, task.successCriteria, actualOutput)
-    let buffer = ''
+    this.bus.upsertAgentState(this.sessionId, this.config.id, { status: 'working' })
+    const initialUsage = this.adapter.getTokensUsed()
+    
+    try {
+      const prompt = DEVIATION_PROMPT(task.title, task.successCriteria, actualOutput)
+      let buffer = ''
     for await (const chunk of this.adapter.send(prompt, [])) {
       if (chunk.type === 'text') buffer += chunk.content
       if (chunk.type === 'error') throw new Error(`Adapter error: ${chunk.content}`)
@@ -28,19 +32,30 @@ export class DeviationDetector {
     })
 
     if (!report.passed) {
-      const usage = this.adapter.getTokensUsed()
+      const finalUsage = this.adapter.getTokensUsed()
+      const deltaIn = finalUsage.input - initialUsage.input
+      const deltaOut = finalUsage.output - initialUsage.output
+
+      this.bus.upsertAgentState(this.sessionId, this.config.id, {
+        tokensIn: deltaIn,
+        tokensOut: deltaOut,
+      })
+
       this.bus.publish({
         sessionId: this.sessionId,
         fromAgent: this.config.id,
         toAgent: 'session',
         type: 'deviation_detected',
         payload: report,
-        tokensIn: usage.input,
-        tokensOut: usage.output,
+        tokensIn: deltaIn,
+        tokensOut: deltaOut,
       })
     }
 
     return report
+    } finally {
+      this.bus.upsertAgentState(this.sessionId, this.config.id, { status: 'idle' })
+    }
   }
 
   private parseReport(taskId: string, raw: string): DeviationReport {
