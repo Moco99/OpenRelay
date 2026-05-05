@@ -500,6 +500,16 @@ async function startInteractiveMode(dir = process.cwd()) {
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
+  /**
+   * Calculate the number of visual rows a line occupies in the terminal,
+   * accounting for word-wrapping at terminal width.
+   */
+  function visualRows(text: string, prefix: number, w: number): number {
+    const len = prefix + text.length
+    if (len === 0) return 1
+    return Math.ceil(len / w) || 1
+  }
+
   function render() {
     const w = cols()
 
@@ -509,12 +519,18 @@ async function startInteractiveMode(dir = process.cwd()) {
       ? REPL_COMMANDS.filter(r => r.cmd.startsWith(text) && r.cmd !== text).slice(0, 6)
       : []
 
-    // Total height: dropdown + 1 (top half-pad) + lines.length + 1 (bottom half-pad)
-    const totalHeight = dropdown.length + 1 + lines.length + 1
+    // Calculate total VISUAL height (accounts for wrapped lines)
+    let totalVisualHeight = dropdown.length  // dropdown rows (1 visual row each)
+    totalVisualHeight += 1                    // top half-block padding
+    for (let i = 0; i < lines.length; i++) {
+      const prefix = i === 0 ? 4 : 3        // "> " prefix vs "   " prefix
+      totalVisualHeight += visualRows(lines[i]!, prefix, w)
+    }
+    totalVisualHeight += 1                    // bottom half-block padding
 
     let buf = HIDE
 
-    // Move up to top of previous render
+    // Move up to top of previous render (use prev VISUAL height)
     if (prevRenderHeight > 0 && screenCursorRow > 0) {
       buf += `\x1b[${screenCursorRow}A`
     }
@@ -526,12 +542,14 @@ async function startInteractiveMode(dir = process.cwd()) {
     }
 
     // ── Top padding (half block) ──
-    // Disable auto-wrap (?7l) to prevent the terminal from adding a newline when exactly `w` chars are printed
     buf += `\x1b[?7l${BAR_FG}${'▄'.repeat(w)}${RS}\x1b[?7h\n`
 
     // Content lines: full-width dark gray background bar
+    // Calculate cursor's visual row as we go
+    let cursorVisualRow = dropdown.length + 1  // start after dropdown + top pad
     for (let i = 0; i < lines.length; i++) {
       const lineText = lines[i]!
+      const prefix = i === 0 ? 4 : 3
 
       buf += BAR
 
@@ -555,27 +573,45 @@ async function startInteractiveMode(dir = process.cwd()) {
       }
 
       buf += `${EL}${RS}\n`
+
+      // Track cursor visual row
+      if (i < cursorLine) {
+        cursorVisualRow += visualRows(lineText, prefix, w)
+      } else if (i === cursorLine) {
+        // Cursor is on this line — figure out which visual row within this line
+        const cursorAbsCol = prefix + cursorCol
+        const wrappedRow = Math.floor(cursorAbsCol / w)
+        cursorVisualRow += wrappedRow
+      }
     }
 
     // ── Bottom padding (half block) ──
     buf += `\x1b[?7l${BAR_FG}${'▀'.repeat(w)}${RS}\x1b[?7h`
 
-    // Position cursor
-    // Target row (0-indexed): dropdown.length + 1 (top pad) + cursorLine
-    const targetRow = dropdown.length + 1 + cursorLine
-    const lastRow = totalHeight - 1
-    const upCount = lastRow - targetRow
+    // Position terminal at cursor's line
+    const lastVisualRow = totalVisualHeight - 1
+    const upCount = lastVisualRow - cursorVisualRow
     if (upCount > 0) buf += `\x1b[${upCount}A`
 
-    const colOffset = 3 + cursorCol + 1
-    buf += `\r\x1b[${colOffset}C`
+    // Column offset (accounting for wrapping within the line)
+    const cursorPrefix = cursorLine === 0 ? 4 : 3
+    const cursorAbsCol = cursorPrefix + cursorCol
+    const colInRow = cursorAbsCol % w
+    buf += `\r\x1b[${colInRow}C`
 
-    buf += `${BLOCK}${WHT}${SHOW}`
+    // Draw a white inverted cursor character instead of using the terminal cursor
+    // This gives us full control over cursor color (white, not blue)
+    const curLineText = lines[cursorLine]!
+    const charUnderCursor = cursorCol < curLineText.length ? curLineText[cursorCol]! : ' '
+    buf += `\x1b[7m${WHT}${charUnderCursor}${RS}`
+
+    // Move back one to keep the terminal cursor hidden behind our drawn cursor
+    buf += `\x1b[D`
 
     process.stdout.write(buf)
 
-    prevRenderHeight = totalHeight
-    screenCursorRow = targetRow
+    prevRenderHeight = totalVisualHeight
+    screenCursorRow = cursorVisualRow
   }
 
   function initialDraw() {
@@ -677,7 +713,7 @@ async function startInteractiveMode(dir = process.cwd()) {
         rawModeActive = true
       }
     },
-    close: () => { process.exit(0) },
+    close: () => { process.stdout.write(SHOW); process.exit(0) },
   } as ReplHandle
 
   // ── Raw key handling ──────────────────────────────────────────────────────────

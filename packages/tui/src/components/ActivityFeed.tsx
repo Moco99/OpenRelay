@@ -1,14 +1,17 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { Box, Text } from 'ink'
 import { resolve, relative } from 'path'
-import type { Message } from '@openrelay/core'
+import type { Message, AgentState } from '@openrelay/core'
 import { agentColor } from '../colors.js'
 import { formatTime } from '../format.js'
 
 interface Props {
   messages: Message[]
   workingDir?: string
+  agentStates?: Map<string, AgentState>
 }
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 interface Activity {
   agent: string
@@ -180,7 +183,7 @@ function toActivity(msg: Message, workingDir: string): Activity | null {
 // Fixed-width column for timestamp + agent name
 const LABEL_WIDTH = 25
 
-export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
+export function ActivityFeed({ messages, workingDir = process.cwd(), agentStates }: Props) {
   const entries: Array<{ msg: Message; activity: Activity }> = []
   for (const msg of messages) {
     const activity = toActivity(msg, workingDir)
@@ -188,9 +191,28 @@ export function ActivityFeed({ messages, workingDir = process.cwd() }: Props) {
   }
   const visible = entries.slice(-25)
 
+  // Animated spinner for when agents are working but no messages yet
+  const [frame, setFrame] = useState(0)
+  const isWorking = agentStates
+    ? Array.from(agentStates.values()).some(s => s.status === 'working')
+    : false
+  const showSpinner = isWorking && visible.length === 0
+
+  useEffect(() => {
+    if (!showSpinner) return
+    const id = setInterval(() => setFrame(f => (f + 1) % SPINNER_FRAMES.length), 80)
+    return () => clearInterval(id)
+  }, [showSpinner])
+
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1} borderStyle="single" borderColor="gray">
       <Text bold>Activity</Text>
+      {showSpinner && (
+        <Box marginTop={1}>
+          <Text color="cyan">{SPINNER_FRAMES[frame]} </Text>
+          <Text color="gray">Creating the plan...</Text>
+        </Box>
+      )}
       {visible.map(({ msg, activity }) => (
         <Box key={msg.id} flexDirection="column">
           <Box>

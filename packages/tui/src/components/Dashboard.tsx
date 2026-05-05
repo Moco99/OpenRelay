@@ -33,7 +33,7 @@ export function Dashboard({ bus, sessionId, agents, startedAt, workingDir = proc
         <PlanPanel bus={bus} sessionId={sessionId} messages={messages} />
       </Box>
       <Box flexGrow={1}>
-        <ActivityFeed messages={messages} workingDir={workingDir} />
+        <ActivityFeed messages={messages} workingDir={workingDir} agentStates={agentStates} />
       </Box>
       {active && <CheckpointPrompt checkpoint={active} onRespond={respond} />}
       <StatusBar

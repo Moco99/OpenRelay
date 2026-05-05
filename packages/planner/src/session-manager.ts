@@ -3,6 +3,7 @@ import { createAdapter } from '@openrelay/adapters'
 import type { MessageBus, ProjectConfig } from '@openrelay/core'
 import type { IAgentAdapter } from '@openrelay/adapters'
 import { PlanGenerator } from './plan-generator.js'
+import type { Plan } from './types.js'
 import { DeviationDetector } from './deviation-detector.js'
 import { BudgetTracker } from './budget-tracker.js'
 import { TaskExecutor } from './task-executor.js'
@@ -62,7 +63,24 @@ export class SessionManager {
     )
 
     // 1. Generate plan
-    const plan = await planGenerator.generate(task)
+    let plan: Plan
+    try {
+      plan = await planGenerator.generate(task)
+    } catch (err) {
+      // Mark all agents idle and surface the error to the TUI
+      for (const agent of this.config.agents) {
+        this.bus.upsertAgentState(this.sessionId, agent.id, { status: 'error' })
+      }
+      this.bus.updateSession(this.sessionId, { status: 'failed', endedAt: Date.now() })
+      this.bus.publish({
+        sessionId: this.sessionId,
+        fromAgent: 'session', toAgent: 'session',
+        type: 'session_end',
+        payload: { reason: 'executor_error', error: `Plan generation failed: ${String(err)}` },
+        tokensIn: 0, tokensOut: 0,
+      })
+      return
+    }
 
     // 2. Checkpoint: plan_ready (if planner config requires it)
     if (plannerConfig.checkpoints.includes('plan_ready')) {
