@@ -46,10 +46,10 @@ const MCPS = [
 ]
 
 const CLIS = [
-  { name: 'Claude Code', dir: '.claude', configFile: '.claude.json' },
-  { name: 'Gemini CLI',  dir: '.gemini', configFile: 'mcp.json' },
-  { name: 'Codex',       dir: '.codex',  configFile: 'mcp.json' },
-  { name: 'OpenCode',    dir: '.opencode', configFile: 'mcp.json' },
+  { name: 'Claude Code', baseDir: '.claude', configPath: '.claude.json' },
+  { name: 'Gemini CLI',  baseDir: '.gemini', configPath: '.gemini/settings.json' },
+  { name: 'Codex',       baseDir: '.codex',  configPath: '.codex/settings.json' },
+  { name: 'OpenCode',    baseDir: '.opencode', configPath: '.opencode/settings.json' },
 ]
 
 export async function cmdSetup(rl: any) {
@@ -59,7 +59,7 @@ export async function cmdSetup(rl: any) {
     console.log('\x1b[95m[openrelay]\x1b[0m Starting Setup Wizard for MCPs and ECC Skills...\n')
 
     const homeDir = os.homedir()
-    const detectedClis = CLIS.filter(c => existsSync(join(homeDir, c.dir)))
+    const detectedClis = CLIS.filter(c => existsSync(join(homeDir, c.baseDir)))
 
     if (detectedClis.length === 0) {
       console.log('No supported CLIs (Claude Code, Gemini CLI, Codex, OpenCode) detected in your home directory.')
@@ -73,7 +73,7 @@ export async function cmdSetup(rl: any) {
     console.log(`\x1b[95m===\x1b[0m Configuring ${cli.name} \x1b[95m===\x1b[0m`)
     
     // 1. Setup MCPs
-    const configPath = join(homeDir, cli.dir, cli.configFile)
+    const configPath = join(homeDir, cli.configPath)
     let config: { mcpServers?: Record<string, any> } = {}
     
     if (existsSync(configPath)) {
@@ -106,7 +106,7 @@ export async function cmdSetup(rl: any) {
     console.log(`  Updated MCP config at ${configPath}`)
 
     // 2. Setup ECC Skills baseline
-    const skillsDir = join(homeDir, cli.dir, 'skills')
+    const skillsDir = join(homeDir, cli.baseDir, 'skills')
     if (!existsSync(skillsDir)) mkdirSync(skillsDir, { recursive: true })
 
     const rulesFile = join(skillsDir, 'ecc-baseline.md')
@@ -144,4 +144,10 @@ export async function cmdSetup(rl: any) {
     }
     process.stdin.on('keypress', onKey)
   })
+
+  } catch (err) {
+    console.error('\x1b[31mSetup failed:\x1b[0m', err)
+  } finally {
+    rl.resume()
+  }
 }
