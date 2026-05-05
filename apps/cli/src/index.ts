@@ -524,7 +524,8 @@ async function startInteractiveMode(dir = process.cwd()) {
     }
 
     // ── Top padding (half block) ──
-    buf += `${BAR_FG}${'▄'.repeat(w)}${RS}\n`
+    // Disable auto-wrap (?7l) to prevent the terminal from adding a newline when exactly `w` chars are printed
+    buf += `\x1b[?7l${BAR_FG}${'▄'.repeat(w)}${RS}\x1b[?7h\n`
 
     // Content lines: full-width dark gray background bar
     for (let i = 0; i < lines.length; i++) {
@@ -548,7 +549,7 @@ async function startInteractiveMode(dir = process.cwd()) {
     }
 
     // ── Bottom padding (half block) ──
-    buf += `${BAR_FG}${'▀'.repeat(w)}${RS}`
+    buf += `\x1b[?7l${BAR_FG}${'▀'.repeat(w)}${RS}\x1b[?7h`
 
     // Position cursor
     // Target row (0-indexed): dropdown.length + 1 (top pad) + cursorLine
@@ -588,10 +589,35 @@ async function startInteractiveMode(dir = process.cwd()) {
     if (busy) return
     const fullText = lines.join('\n').trim()
 
-    // Move below the render area
-    const downCount = (prevRenderHeight - 1) - screenCursorRow
-    if (downCount > 0) process.stdout.write(`\x1b[${downCount}B`)
-    process.stdout.write('\r\n')
+    // ── Erase active input box and replace with static history block ──
+    if (prevRenderHeight > 0 && screenCursorRow > 0) {
+      process.stdout.write(`\x1b[${screenCursorRow}A`)
+    }
+    process.stdout.write('\r\x1b[J')
+
+    if (fullText) {
+      const w = cols()
+      let buf = `\x1b[?7l${BAR_FG}${'▄'.repeat(w)}${RS}\x1b[?7h\n`
+      
+      const submittedLines = fullText.split('\n')
+      for (let i = 0; i < submittedLines.length; i++) {
+        buf += BAR
+        const lineText = submittedLines[i]!
+        if (i === 0) {
+          if (lineText.startsWith('/')) {
+            buf += ` ${L}> ${lineText}${RS}${BAR}`
+          } else {
+            buf += ` ${L}>${RS}${BAR} ${WHT}${lineText}`
+          }
+        } else {
+          buf += `   ${WHT}${lineText}`
+        }
+        buf += `${EL}${RS}\n`
+      }
+      
+      buf += `\x1b[?7l${BAR_FG}${'▀'.repeat(w)}${RS}\x1b[?7h\n`
+      process.stdout.write(buf)
+    }
 
     resetInput()
 
