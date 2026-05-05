@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import os from 'os'
-import { execa } from 'execa'
 
 const MCPS = [
   {
@@ -136,16 +135,13 @@ export async function cmdSetup(rl: any) {
   console.log('Remember to add your API keys to the config files mentioned above before running tasks.')
   console.log('Press any key to return to REPL...')
   
+  rl.resume()
   // Wait for single keypress
   await new Promise<void>(resolve => {
-    const onData = () => {
-      process.stdin.removeListener('data', onData)
+    const onKey = () => {
+      process.stdin.removeListener('keypress', onKey)
       resolve()
     }
-    process.stdin.on('data', onData)
+    process.stdin.on('keypress', onKey)
   })
-
-  } finally {
-    rl.resume()
-  }
 }

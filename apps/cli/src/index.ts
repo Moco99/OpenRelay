@@ -58,6 +58,7 @@ const TOKEN_BUDGETS = { planner: 50000, coder: 200000 }
 const REPL_COMMANDS = [
   { cmd: '/init',    desc: 'Initialize crew.md in current directory' },
   { cmd: '/config',  desc: 'Configure agents interactively' },
+  { cmd: '/setup',   desc: 'Install MCP servers and ECC skills globally' },
   { cmd: '/run',     desc: 'Run a task with your crew' },
   { cmd: '/status',  desc: 'Show latest session status' },
   { cmd: '/history', desc: 'Show past sessions' },
