@@ -7,7 +7,7 @@ const MCPS = [
     id: 'playwright',
     name: 'Playwright (Browser Automation)',
     command: 'npx',
-    args: ['-y', '@modelcontextprotocol/server-playwright'],
+    args: ['-y', '@playwright/mcp@latest'],
     env: {},
     instructions: 'No credentials required. Playwright will download browser binaries automatically on first run.',
   },
@@ -48,8 +48,8 @@ const MCPS = [
 const CLIS = [
   { name: 'Claude Code', baseDir: '.claude', configPath: '.claude.json' },
   { name: 'Gemini CLI',  baseDir: '.gemini', configPath: '.gemini/settings.json' },
-  { name: 'Codex',       baseDir: '.codex',  configPath: '.codex/settings.json' },
-  { name: 'OpenCode',    baseDir: '.opencode', configPath: '.opencode/settings.json' },
+  { name: 'Codex',       baseDir: '.codex',  configPath: '.codex/config.toml' },
+  { name: 'OpenCode',    baseDir: '.opencode', configPath: '.opencode/config.toml' },
 ]
 
 export async function cmdSetup(rl: any) {
@@ -74,36 +74,66 @@ export async function cmdSetup(rl: any) {
     
     // 1. Setup MCPs
     const configPath = join(homeDir, cli.configPath)
-    let config: { mcpServers?: Record<string, any> } = {}
-    
-    if (existsSync(configPath)) {
-      try {
-        config = JSON.parse(readFileSync(configPath, 'utf8'))
-      } catch (e) {
-        console.log(`  \x1b[31mError reading ${configPath}. Starting fresh.\x1b[0m`)
-      }
-    }
-    if (!config.mcpServers) config.mcpServers = {}
-
-    for (const mcp of MCPS) {
-      if (config.mcpServers[mcp.id]) {
-        console.log(`  \x1b[32m✔\x1b[0m MCP ${mcp.name} already installed.`)
-      } else {
-        console.log(`  \x1b[33m+\x1b[0m Installing MCP: ${mcp.name}`)
-        config.mcpServers[mcp.id] = {
-          command: mcp.command,
-          args: mcp.args,
-          env: mcp.env,
-        }
-        if (Object.keys(mcp.env).length > 0) {
-          console.log(`    \x1b[36mNote:\x1b[0m ${mcp.instructions}`)
-          console.log(`    (Added empty placeholder for environment variables. Please edit \x1b[35m${configPath}\x1b[0m to add your keys later)`)
+    if (configPath.endsWith('.toml')) {
+      let tomlContent = ''
+      if (existsSync(configPath)) {
+        try {
+          tomlContent = readFileSync(configPath, 'utf8')
+        } catch (e) {
+          console.log(`  \x1b[31mError reading ${configPath}. Starting fresh.\x1b[0m`)
         }
       }
-    }
 
-    writeFileSync(configPath, JSON.stringify(config, null, 2))
-    console.log(`  Updated MCP config at ${configPath}`)
+      for (const mcp of MCPS) {
+        if (tomlContent.includes(`[mcp_servers.${mcp.id}]`)) {
+          console.log(`  \x1b[32m✔\x1b[0m MCP ${mcp.name} already installed.`)
+        } else {
+          console.log(`  \x1b[33m+\x1b[0m Installing MCP: ${mcp.name}`)
+          tomlContent += `\n[mcp_servers.${mcp.id}]\ncommand = "${mcp.command}"\nargs = ${JSON.stringify(mcp.args)}\n`
+          if (Object.keys(mcp.env).length > 0) {
+            tomlContent += `[mcp_servers.${mcp.id}.env]\n`
+            for (const [key, val] of Object.entries(mcp.env)) {
+              tomlContent += `${key} = "${val}"\n`
+            }
+            console.log(`    \x1b[36mNote:\x1b[0m ${mcp.instructions}`)
+            console.log(`    (Added empty placeholder for environment variables. Please edit \x1b[35m${configPath}\x1b[0m to add your keys later)`)
+          }
+        }
+      }
+      writeFileSync(configPath, tomlContent.trim() + '\n')
+      console.log(`  Updated MCP config at ${configPath}`)
+
+    } else {
+      let config: { mcpServers?: Record<string, any> } = {}
+      if (existsSync(configPath)) {
+        try {
+          config = JSON.parse(readFileSync(configPath, 'utf8'))
+        } catch (e) {
+          console.log(`  \x1b[31mError reading ${configPath}. Starting fresh.\x1b[0m`)
+        }
+      }
+      if (!config.mcpServers) config.mcpServers = {}
+
+      const configString = JSON.stringify(config)
+      for (const mcp of MCPS) {
+        if (config.mcpServers[mcp.id] || configString.includes(`"plugin:${mcp.id}:${mcp.id}"`)) {
+          console.log(`  \x1b[32m✔\x1b[0m MCP ${mcp.name} already installed.`)
+        } else {
+          console.log(`  \x1b[33m+\x1b[0m Installing MCP: ${mcp.name}`)
+          config.mcpServers[mcp.id] = {
+            command: mcp.command,
+            args: mcp.args,
+            env: mcp.env,
+          }
+          if (Object.keys(mcp.env).length > 0) {
+            console.log(`    \x1b[36mNote:\x1b[0m ${mcp.instructions}`)
+            console.log(`    (Added empty placeholder for environment variables. Please edit \x1b[35m${configPath}\x1b[0m to add your keys later)`)
+          }
+        }
+      }
+      writeFileSync(configPath, JSON.stringify(config, null, 2))
+      console.log(`  Updated MCP config at ${configPath}`)
+    }
 
     // 2. Setup ECC Skills baseline
     const skillsDir = join(homeDir, cli.baseDir, 'skills')
