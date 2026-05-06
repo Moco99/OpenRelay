@@ -4,6 +4,7 @@ import { execSync } from "child_process"
 const result = await Bun.build({
   entrypoints: ["./src/index.ts"],
   outdir: "./dist",
+  naming: "openrelay",
   target: "bun",
   plugins: [
     {

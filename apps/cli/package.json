@@ -1,10 +1,10 @@
 {
   "name": "@velantex/openrelay",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Multi-agent orchestration CLI for terminal AI agents",
   "type": "module",
   "bin": {
-    "openrelay": "./dist/index.js"
+    "openrelay": "./dist/openrelay"
   },
   "files": [
     "dist"

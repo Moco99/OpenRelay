@@ -40,12 +40,12 @@ const AVAILABLE_MODELS: Record<string, { planner: string[]; coder: string[] }> =
     coder:   ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'],
   },
   gemini: {
-    planner: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-    coder:   ['gemini-2.5-flash', 'gemini-2.5-pro'],
+    planner: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+    coder:   ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-pro-preview'],
   },
   codex: {
-    planner: ['o3', 'o4-mini'],
-    coder:   ['o4-mini', 'o3'],
+    planner: ['gpt-5.5', 'gpt-5.4', 'gpt-5.2'],
+    coder:   ['gpt-5.5', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.4'],
   },
   opencode: {
     planner: ['claude-opus-4-7', 'claude-sonnet-4-6'],
