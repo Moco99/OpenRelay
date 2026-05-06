@@ -30,7 +30,7 @@ interface ReplHandle {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const VERSION = 'v0.1.0'
+const VERSION = 'v0.1.3'
 
 const KNOWN_CLIS = ['claude', 'gemini', 'codex', 'opencode'] as const
 
@@ -41,7 +41,7 @@ const AVAILABLE_MODELS: Record<string, { planner: string[]; coder: string[] }> =
   },
   gemini: {
     planner: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
-    coder:   ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-pro-preview'],
+    coder:   ['gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.1-pro-preview'],
   },
   codex: {
     planner: ['gpt-5.5', 'gpt-5.4', 'gpt-5.2'],

@@ -96,7 +96,7 @@ checkpoints  = []
 | `cli`      | Planner models                                                          | Executor models                                                                          |
 | ---------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `claude`   | `claude-opus-4-7`, `claude-sonnet-4-6`                                  | `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`                                         |
-| `gemini`   | `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`    | `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`, `gemini-2.5-flash`            |
+| `gemini`   | `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash` | `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | `codex`    | `gpt-5.5`, `gpt-5.4`, `gpt-5.2`                                         | `gpt-5.5`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.4`                                   |
 | `opencode` | `claude-opus-4-7`, `claude-sonnet-4-6`                                  | `claude-sonnet-4-6`, `claude-haiku-4-5-20251001`                                         |
 
